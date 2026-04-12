@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Criar Post</title>
+</head>
+<body>
+
+<h1>Novo Post</h1>
+
+<form method="POST" enctype="multipart/form-data">
+    {% csrf_token %}
+    
+    <input type="text" name="titulo" placeholder="Título"><br><br>
+    
+    <textarea name="descricao" placeholder="Descrição"></textarea><br><br>
+
+    <select name="categoria">
+        <option value="servico">Serviço</option>
+        <option value="venda">Venda</option>
+        <option value="doacao">Doação</option>
+        <option value="aviso">Aviso</option>
+    </select><br><br>
+
+    <input type="file" name="imagem" class="form-control">
+
+    <button type="submit">Salvar</button>
+</form>
+
+</body>
+</html>
