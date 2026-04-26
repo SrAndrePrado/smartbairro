@@ -11,4 +11,6 @@ urlpatterns = [
     path('login/', auth_views.LoginView.as_view(template_name='posts/login.html')),
     path('logout/', auth_views.LogoutView.as_view(next_page='/')),
     path('cadastro/', views.cadastro),
+    path('curtir/<int:post_id>/', views.curtir_post),
+    path('comentar/<int:post_id>/', views.comentar_post),
 ]

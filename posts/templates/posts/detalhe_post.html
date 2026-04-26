@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+   <br> 
     {% if user == post.usuario %}
     <a href="/editar/{{ post.id }}/" class="btn btn-warning">Editar</a>
     <a href="/deletar/{{ post.id }}/" class="btn btn-danger">Deletar</a>
@@ -27,4 +28,31 @@
 </div>
 
 </body>
+<br>
+<h4 id="comentarios">Comentários</h4>
+
+<form action="/comentar/{{ post.id }}/" method="POST">
+    {% csrf_token %}
+    <textarea name="texto" class="form-control" required></textarea>
+    <br>
+    <button type="submit" class="btn btn-primary">Comentar</button>
+</form>
+
+<hr>
+
+{% for comentario in comentarios %}
+    <p><strong>{{ comentario.usuario.username }}</strong>: {{ comentario.texto }}</p>
+{% empty %}
+    <p>Seja o primeiro a comentar!</p>
+{% endfor %}
+<hr><br>
+<h5>Quem curtiu:</h5>
+
+<ul>
+    {% for curtida in curtidas %}
+        <li>{{ curtida.usuario.username }}</li>
+    {% empty %}
+        <li>Ninguém curtiu ainda</li>
+    {% endfor %}
+</ul>
 </html>
