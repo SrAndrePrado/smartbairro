@@ -1,58 +1,96 @@
-<!DOCTYPE html>
-<html>
-   <br> 
-    {% if user == post.usuario %}
-    <a href="/editar/{{ post.id }}/" class="btn btn-warning">Editar</a>
-    <a href="/deletar/{{ post.id }}/" class="btn btn-danger">Deletar</a>
-{% endif %}
-{% if post.imagem %}
-    <img src="{{ post.imagem.url }}" class="img-fluid mb-3">
-{% endif %}
-<head>
-    <title>{{ post.titulo }}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body>
+{% extends 'posts/base.html' %}
+
+{% block content %}
 
 <div class="container mt-4">
 
-    <h1>{{ post.titulo }}</h1>
-    <h5 class="text-muted">{{ post.categoria }}</h5>
+    <!-- CARD DO POST -->
+    <div class="card shadow-sm mb-4">
 
-    <hr>
+        {% if post.imagem %}
+            <img src="{{ post.imagem.url }}" class="card-img-top" style="max-height:400px; object-fit:cover;">
+        {% endif %}
 
-    <p>{{ post.descricao }}</p>
+        <div class="card-body">
 
-    <a href="/" class="btn btn-secondary">Voltar</a>
+            <!-- TÍTULO + AÇÕES -->
+            <div class="d-flex justify-content-between align-items-start">
+
+                <div>
+                    <h2>{{ post.titulo }}</h2>
+                    <p class="text-muted mb-1">
+                        👤 {{ post.usuario.username }}
+                    </p>
+                    <small class="text-muted">
+                        {{ post.created_at|date:"d/m/Y H:i" }}
+                    </small>
+                </div>
+
+                {% if user == post.usuario %}
+                    <div>
+                        <a href="/editar/{{ post.id }}/" class="btn btn-warning btn-sm">Editar</a>
+                        <a href="/deletar/{{ post.id }}/" class="btn btn-danger btn-sm">Deletar</a>
+                    </div>
+                {% endif %}
+
+            </div>
+
+            <span class="badge bg-secondary mt-2">
+                {{ post.get_categoria_display }}
+            </span>
+
+            <hr>
+
+            <p>{{ post.descricao }}</p>
+
+            <a href="/" class="btn btn-outline-secondary btn-sm">← Voltar</a>
+
+        </div>
+
+    </div>
+
+    <!-- COMENTÁRIOS -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+
+            <h4 id="comentarios">💬 Comentários</h4>
+
+            <form action="/comentar/{{ post.id }}/" method="POST">
+                {% csrf_token %}
+                <textarea name="texto" class="form-control mb-2" required></textarea>
+                <button type="submit" class="btn btn-primary btn-sm">Comentar</button>
+            </form>
+
+            <hr>
+
+            {% for comentario in comentarios %}
+                <p>
+                    <strong>{{ comentario.usuario.username }}</strong>: {{ comentario.texto }}
+                </p>
+            {% empty %}
+                <p class="text-muted">Seja o primeiro a comentar!</p>
+            {% endfor %}
+
+        </div>
+    </div>
+
+    <!-- CURTIDAS -->
+    <div class="card shadow-sm">
+        <div class="card-body">
+
+            <h5>❤️ Quem curtiu:</h5>
+
+            <ul class="mb-0">
+                {% for curtida in curtidas %}
+                    <li>{{ curtida.usuario.username }}</li>
+                {% empty %}
+                    <li class="text-muted">Ninguém curtiu ainda</li>
+                {% endfor %}
+            </ul>
+
+        </div>
+    </div>
 
 </div>
 
-</body>
-<br>
-<h4 id="comentarios">Comentários</h4>
-
-<form action="/comentar/{{ post.id }}/" method="POST">
-    {% csrf_token %}
-    <textarea name="texto" class="form-control" required></textarea>
-    <br>
-    <button type="submit" class="btn btn-primary">Comentar</button>
-</form>
-
-<hr>
-
-{% for comentario in comentarios %}
-    <p><strong>{{ comentario.usuario.username }}</strong>: {{ comentario.texto }}</p>
-{% empty %}
-    <p>Seja o primeiro a comentar!</p>
-{% endfor %}
-<hr><br>
-<h5>Quem curtiu:</h5>
-
-<ul>
-    {% for curtida in curtidas %}
-        <li>{{ curtida.usuario.username }}</li>
-    {% empty %}
-        <li>Ninguém curtiu ainda</li>
-    {% endfor %}
-</ul>
-</html>
+{% endblock %}
