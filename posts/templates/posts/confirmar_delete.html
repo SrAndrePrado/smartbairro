@@ -1,0 +1,23 @@
+{% extends 'posts/base.html' %}
+
+{% block content %}
+
+<div class="container mt-4">
+
+    <h1>Apagar post</h1>
+
+    <div class="alert alert-warning" role="alert">
+        Tem certeza que deseja apagar o post
+        <strong>&ldquo;{{ post.titulo }}&rdquo;</strong>?
+        Esta acao nao pode ser desfeita.
+    </div>
+
+    <form method="POST">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Sim, apagar</button>
+        <a href="/post/{{ post.id }}/" class="btn btn-secondary">Cancelar</a>
+    </form>
+
+</div>
+
+{% endblock %}

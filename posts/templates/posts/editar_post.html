@@ -6,33 +6,57 @@
 
     <h1>Editar Post</h1>
 
-    <form method="POST">
+    {% if erros %}
+        <div class="alert alert-danger" role="alert">
+            <ul class="mb-0">
+                {% for erro in erros %}
+                    <li>{{ erro }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    <form method="POST" enctype="multipart/form-data">
         {% csrf_token %}
-        
+
         <div class="mb-3">
-            <input type="text" name="titulo" class="form-control" value="{{ post.titulo }}">
-        </div>
-        
-        <div class="mb-3">
-            <textarea name="descricao" class="form-control">{{ post.descricao }}</textarea>
+            <label for="campo-titulo" class="form-label">Titulo</label>
+            <input type="text" id="campo-titulo" name="titulo" class="form-control"
+                   value="{{ post.titulo }}" maxlength="100" required>
         </div>
 
         <div class="mb-3">
-            <select name="categoria" class="form-control">
+            <label for="campo-descricao" class="form-label">Descricao</label>
+            <textarea id="campo-descricao" name="descricao" class="form-control"
+                      required>{{ post.descricao }}</textarea>
+        </div>
 
-    <option value="servico" {% if post.categoria == 'servico' %}selected{% endif %}>Serviço</option>
+        <div class="mb-3">
+            <label for="campo-categoria" class="form-label">Categoria</label>
+            <select id="campo-categoria" name="categoria" class="form-select" required>
+                {% for valor, rotulo in categorias %}
+                    <option value="{{ valor }}"
+                        {% if post.categoria == valor %}selected{% endif %}>{{ rotulo }}</option>
+                {% endfor %}
+            </select>
+        </div>
 
-    <option value="venda" {% if post.categoria == 'venda' %}selected{% endif %}>Venda</option>
+        <div class="mb-3">
+            <label for="campo-telefone" class="form-label">Telefone para contato (opcional)</label>
+            <input type="text" id="campo-telefone" name="telefone" class="form-control"
+                   value="{{ post.telefone|default:'' }}" maxlength="20">
+        </div>
 
-    <option value="doacao" {% if post.categoria == 'doacao' %}selected{% endif %}>Doação</option>
-
-    <option value="aviso" {% if post.categoria == 'aviso' %}selected{% endif %}>Aviso</option>
-
-</select>
+        <div class="mb-3">
+            <label for="campo-imagem" class="form-label">Trocar imagem (opcional)</label>
+            <input type="file" id="campo-imagem" name="imagem" class="form-control" accept="image/*">
+            {% if post.imagem %}
+                <div class="form-text">Deixe em branco para manter a imagem atual.</div>
+            {% endif %}
         </div>
 
         <button type="submit" class="btn btn-success">Salvar</button>
-        <a href="/" class="btn btn-secondary">Cancelar</a>
+        <a href="/post/{{ post.id }}/" class="btn btn-secondary">Cancelar</a>
     </form>
 
 </div>

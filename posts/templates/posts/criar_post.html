@@ -1,27 +1,58 @@
 {% extends 'posts/base.html' %}
 
-{% block content %} 
+{% block content %}
 
 <h1>Novo Post</h1>
 
+{% if erros %}
+    <div class="alert alert-danger" role="alert">
+        <ul class="mb-0">
+            {% for erro in erros %}
+                <li>{{ erro }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+{% endif %}
+
 <form method="POST" enctype="multipart/form-data">
     {% csrf_token %}
-    
-    <input type="text" name="titulo" placeholder="Título"><br><br>
-    
-    <textarea name="descricao" placeholder="Descrição"></textarea><br><br>
 
-    <select name="categoria">
-        <option value="servico">Serviço</option>
-        <option value="venda">Venda</option>
-        <option value="doacao">Doação</option>
-        <option value="aviso">Aviso</option>
-        <option value="achados">Achados & Perdidos</option>
-    </select><br><br>
-    <input type="text" name="telefone" class="form-control" placeholder="Telefone">
-    <input type="file" name="imagem" class="form-control">
+    <div class="mb-3">
+        <label for="campo-titulo" class="form-label">Titulo</label>
+        <input type="text" id="campo-titulo" name="titulo" class="form-control"
+               value="{{ valores.titulo|default:'' }}" maxlength="100" required>
+    </div>
 
-    <button type="submit">Salvar</button>
+    <div class="mb-3">
+        <label for="campo-descricao" class="form-label">Descricao</label>
+        <textarea id="campo-descricao" name="descricao" class="form-control"
+                  required>{{ valores.descricao|default:'' }}</textarea>
+    </div>
+
+    <div class="mb-3">
+        <label for="campo-categoria" class="form-label">Categoria</label>
+        <select id="campo-categoria" name="categoria" class="form-select" required>
+            <option value="">Selecione uma categoria</option>
+            {% for valor, rotulo in categorias %}
+                <option value="{{ valor }}"
+                    {% if valores.categoria == valor %}selected{% endif %}>{{ rotulo }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="mb-3">
+        <label for="campo-telefone" class="form-label">Telefone para contato (opcional)</label>
+        <input type="text" id="campo-telefone" name="telefone" class="form-control"
+               value="{{ valores.telefone|default:'' }}" maxlength="20">
+    </div>
+
+    <div class="mb-3">
+        <label for="campo-imagem" class="form-label">Imagem (opcional)</label>
+        <input type="file" id="campo-imagem" name="imagem" class="form-control" accept="image/*">
+    </div>
+
+    <button type="submit" class="btn btn-success">Salvar</button>
+    <a href="/" class="btn btn-secondary">Cancelar</a>
 </form>
 
 {% endblock %}

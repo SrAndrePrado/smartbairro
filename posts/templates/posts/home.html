@@ -5,11 +5,13 @@
 <h1 class="mb-4">🏡 SmartBairro</h1>
 
 <!-- BUSCA -->
-<form method="GET" class="mb-4 d-flex">
-    <input 
-        type="text" 
-        name="busca" 
-        class="form-control me-2" 
+<form method="GET" class="mb-4 d-flex" role="search">
+    <label for="campo-busca" class="visually-hidden">Buscar posts</label>
+    <input
+        type="text"
+        id="campo-busca"
+        name="busca"
+        class="form-control me-2"
         placeholder="Buscar posts..."
         value="{{ request.GET.busca }}"
     >
@@ -43,6 +45,7 @@
 
             {% if post.imagem %}
                 <img src="{{ post.imagem.url }}" class="card-img-top"
+                alt="Imagem do post: {{ post.titulo }}"
                 style="height:200px; object-fit:cover;">
             {% endif %}
 
@@ -58,7 +61,7 @@
                 </p>
 
                 <small class="text-muted">
-                    {{ post.created_at|date:"d/m/Y H:i" }}
+                    {{ post.data_criacao|date:"d/m/Y H:i" }}
                 </small>
 
                 {% if post.telefone %}
@@ -89,7 +92,7 @@
                     {% endif %}
                 </form>
 
-                <p class="mt-2">{{ post.curtida_set.count }} curtidas</p>
+                <p class="mt-2">{{ post.total_curtidas }} curtidas</p>
 
             </div>
 

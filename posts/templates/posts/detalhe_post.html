@@ -8,7 +8,9 @@
     <div class="card shadow-sm mb-4">
 
         {% if post.imagem %}
-            <img src="{{ post.imagem.url }}" class="card-img-top" style="max-height:400px; object-fit:cover;">
+            <img src="{{ post.imagem.url }}" class="card-img-top"
+                 alt="Imagem do post: {{ post.titulo }}"
+                 style="max-height:400px; object-fit:cover;">
         {% endif %}
 
         <div class="card-body">
@@ -22,14 +24,17 @@
                         👤 {{ post.usuario.username }}
                     </p>
                     <small class="text-muted">
-                        {{ post.created_at|date:"d/m/Y H:i" }}
+                        {{ post.data_criacao|date:"d/m/Y H:i" }}
                     </small>
                 </div>
 
                 {% if user == post.usuario %}
-                    <div>
+                    <div class="d-flex gap-2">
                         <a href="/editar/{{ post.id }}/" class="btn btn-warning btn-sm">Editar</a>
-                        <a href="/deletar/{{ post.id }}/" class="btn btn-danger btn-sm">Deletar</a>
+                        <form action="/deletar/{{ post.id }}/" method="POST">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-danger btn-sm">Deletar</button>
+                        </form>
                     </div>
                 {% endif %}
 
@@ -57,7 +62,8 @@
 
             <form action="/comentar/{{ post.id }}/" method="POST">
                 {% csrf_token %}
-                <textarea name="texto" class="form-control mb-2" required></textarea>
+                <label for="campo-comentario" class="form-label">Escreva um comentario</label>
+                <textarea id="campo-comentario" name="texto" class="form-control mb-2" required></textarea>
                 <button type="submit" class="btn btn-primary btn-sm">Comentar</button>
             </form>
 
