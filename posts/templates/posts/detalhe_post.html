@@ -60,22 +60,25 @@
 
             <h4 id="comentarios">💬 Comentários</h4>
 
-            <form action="/comentar/{{ post.id }}/" method="POST">
+            <form action="/comentar/{{ post.id }}/" method="POST" data-comentar="{{ post.id }}">
                 {% csrf_token %}
                 <label for="campo-comentario" class="form-label">Escreva um comentario</label>
                 <textarea id="campo-comentario" name="texto" class="form-control mb-2" required></textarea>
+                <p id="erro-comentario" class="text-danger small" role="alert"></p>
                 <button type="submit" class="btn btn-primary btn-sm">Comentar</button>
             </form>
 
             <hr>
 
-            {% for comentario in comentarios %}
-                <p>
-                    <strong>{{ comentario.usuario.username }}</strong>: {{ comentario.texto }}
-                </p>
-            {% empty %}
-                <p class="text-muted">Seja o primeiro a comentar!</p>
-            {% endfor %}
+            <div id="lista-comentarios">
+                {% for comentario in comentarios %}
+                    <p>
+                        <strong>{{ comentario.usuario.username }}</strong>: {{ comentario.texto }}
+                    </p>
+                {% empty %}
+                    <p id="sem-comentarios" class="text-muted">Seja o primeiro a comentar!</p>
+                {% endfor %}
+            </div>
 
         </div>
     </div>

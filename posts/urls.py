@@ -16,4 +16,8 @@ urlpatterns = [
 
     # API de ingestao: recebe mensagens enviadas pelos moradores por mensageria.
     path('api/ingestao/', views.api_ingestao, name='api_ingestao'),
+
+    # Endpoints consumidos pelo JavaScript da propria pagina.
+    path('api/curtir/<int:post_id>/', views.api_curtir, name='api_curtir'),
+    path('api/comentar/<int:post_id>/', views.api_comentar, name='api_comentar'),
 ]

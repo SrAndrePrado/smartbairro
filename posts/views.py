@@ -309,3 +309,76 @@ def api_ingestao(request):
         'id': mensagem.id,
         'status': mensagem.status,
     }, status=201)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints JSON usados pelo JavaScript da propria pagina
+# ---------------------------------------------------------------------------
+#
+# Diferenca importante para o endpoint de ingestao acima: aqui quem chama e o
+# navegador do proprio usuario, ja autenticado por sessao. Por isso estes
+# endpoints NAO usam csrf_exempt -- o JavaScript envia o token CSRF no
+# cabecalho, exatamente como um formulario faria. Quem chama de fora do site
+# nao consegue forjar essa chamada.
+
+
+def _precisa_login(request):
+    """Responde 401 em JSON quando o usuario nao esta autenticado.
+
+    Nao da para usar @login_required aqui: ele responde com um redirecionamento
+    para a tela de login, que o JavaScript nao saberia interpretar.
+    """
+    if not request.user.is_authenticated:
+        return JsonResponse(
+            {'ok': False, 'erro': 'Voce precisa entrar para fazer isso.'},
+            status=401,
+        )
+    return None
+
+
+@require_POST
+def api_curtir(request, post_id):
+    negado = _precisa_login(request)
+    if negado:
+        return negado
+
+    post = get_object_or_404(Post, id=post_id, status='publicado')
+
+    curtida, criada = Curtida.objects.get_or_create(usuario=request.user, post=post)
+    if not criada:
+        curtida.delete()
+
+    return JsonResponse({
+        'ok': True,
+        'curtido': criada,
+        'total': post.curtida_set.count(),
+    })
+
+
+@require_POST
+def api_comentar(request, post_id):
+    negado = _precisa_login(request)
+    if negado:
+        return negado
+
+    post = get_object_or_404(Post, id=post_id, status='publicado')
+    texto = (request.POST.get('texto') or '').strip()
+
+    if not texto:
+        return JsonResponse(
+            {'ok': False, 'erro': 'Escreva algo antes de enviar o comentario.'},
+            status=400,
+        )
+
+    comentario = Comentario.objects.create(
+        usuario=request.user, post=post, texto=texto
+    )
+
+    return JsonResponse({
+        'ok': True,
+        'comentario': {
+            'usuario': comentario.usuario.username,
+            'texto': comentario.texto,
+        },
+        'total': post.comentario_set.count(),
+    }, status=201)
