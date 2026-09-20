@@ -13,4 +13,7 @@ urlpatterns = [
     path('cadastro/', views.cadastro),
     path('curtir/<int:post_id>/', views.curtir_post),
     path('comentar/<int:post_id>/', views.comentar_post),
+
+    # API de ingestao: recebe mensagens enviadas pelos moradores por mensageria.
+    path('api/ingestao/', views.api_ingestao, name='api_ingestao'),
 ]

@@ -128,6 +128,11 @@ STATIC_URL = 'static/'
 
 # Sem esta linha o @login_required manda o usuario para /accounts/login/,
 # que nao existe neste projeto, resultando em 404.
+# Token compartilhado que autentica o servico de mensageria ao entregar uma
+# mensagem no endpoint de ingestao. Em producao, defina INGESTAO_TOKEN no
+# ambiente com um valor longo e aleatorio.
+INGESTAO_TOKEN = os.environ.get('INGESTAO_TOKEN', 'token-de-desenvolvimento-trocar-em-producao')
+
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
