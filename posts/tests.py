@@ -226,3 +226,126 @@ class TestSegredosNoRepositorio(TestCase):
         conteudo = caminho.read_text(encoding='utf-8').lower()
         for proibido in ('senha:', 'admin_teste', 'user_teste'):
             self.assertNotIn(proibido, conteudo)
+
+
+# ===========================================================================
+# Camada de ingestao de mensagens
+# ===========================================================================
+
+import json
+
+from django.test import override_settings
+
+from .models import MensagemRecebida
+
+TOKEN = 'token-de-teste-123'
+
+
+@override_settings(INGESTAO_TOKEN=TOKEN)
+class TestIngestao(TestCase):
+    url = '/api/ingestao/'
+
+    def enviar(self, corpo, token=TOKEN, cru=False):
+        return self.client.post(
+            self.url,
+            data=corpo if cru else json.dumps(corpo),
+            content_type='application/json',
+            headers={'x-ingestao-token': token} if token is not None else {},
+        )
+
+    # --- autenticacao ---
+
+    def test_get_nao_e_aceito(self):
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, 405)
+
+    def test_sem_token_e_recusado(self):
+        r = self.enviar({'canal': 'teste', 'remetente': '11999', 'texto': 'oi'}, token=None)
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(MensagemRecebida.objects.count(), 0)
+
+    def test_token_errado_e_recusado(self):
+        r = self.enviar({'canal': 'teste', 'remetente': '11999', 'texto': 'oi'}, token='errado')
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(MensagemRecebida.objects.count(), 0)
+
+    # --- validacao do conteudo ---
+
+    def test_json_invalido(self):
+        r = self.enviar('isso nao e json', cru=True)
+        self.assertEqual(r.status_code, 400)
+
+    def test_canal_invalido(self):
+        r = self.enviar({'canal': 'pombo', 'remetente': '11999', 'texto': 'oi'})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(MensagemRecebida.objects.count(), 0)
+
+    def test_texto_vazio(self):
+        r = self.enviar({'canal': 'teste', 'remetente': '11999', 'texto': '   '})
+        self.assertEqual(r.status_code, 400)
+
+    def test_remetente_vazio(self):
+        r = self.enviar({'canal': 'teste', 'remetente': '', 'texto': 'oi'})
+        self.assertEqual(r.status_code, 400)
+
+    # --- gravacao ---
+
+    def test_mensagem_valida_e_gravada(self):
+        r = self.enviar({
+            'canal': 'whatsapp',
+            'remetente': '5511999998888',
+            'texto': 'vendo sofa 3 lugares 200 reais',
+        })
+        self.assertEqual(r.status_code, 201)
+        corpo = r.json()
+        self.assertTrue(corpo['ok'])
+        self.assertFalse(corpo['duplicada'])
+
+        self.assertEqual(MensagemRecebida.objects.count(), 1)
+        m = MensagemRecebida.objects.get()
+        self.assertEqual(m.canal, 'whatsapp')
+        self.assertEqual(m.texto, 'vendo sofa 3 lugares 200 reais')
+        self.assertEqual(m.status, 'pendente')
+        self.assertIsNone(m.post)
+
+    def test_reenvio_com_mesmo_id_externo_nao_duplica(self):
+        corpo = {
+            'canal': 'whatsapp', 'remetente': '5511999998888',
+            'texto': 'achei um guarda-chuva', 'id_externo': 'wamid.ABC123',
+        }
+        primeira = self.enviar(corpo)
+        segunda = self.enviar(corpo)
+
+        self.assertEqual(primeira.status_code, 201)
+        self.assertEqual(segunda.status_code, 200)
+        self.assertTrue(segunda.json()['duplicada'])
+        self.assertEqual(segunda.json()['id'], primeira.json()['id'])
+        self.assertEqual(MensagemRecebida.objects.count(), 1)
+
+    def test_mensagens_sem_id_externo_nao_colidem(self):
+        self.enviar({'canal': 'teste', 'remetente': 'a', 'texto': 'primeira'})
+        self.enviar({'canal': 'teste', 'remetente': 'b', 'texto': 'segunda'})
+        self.assertEqual(MensagemRecebida.objects.count(), 2)
+
+
+class TestRascunhoNaoAparece(BaseComDados):
+    """Post em rascunho fica fora do mural ate ser aprovado."""
+
+    def test_publicado_aparece(self):
+        r = self.client.get('/')
+        self.assertContains(r, 'Guarda-chuva preto')
+
+    def test_rascunho_nao_aparece(self):
+        self.post.status = 'rascunho'
+        self.post.save()
+        r = self.client.get('/')
+        self.assertNotContains(r, 'Guarda-chuva preto')
+
+    def test_post_do_site_nasce_publicado(self):
+        self.client.login(username='ana', password='senha-de-teste-123')
+        self.client.post('/criar/', {
+            'titulo': 'Bicicleta', 'descricao': 'Aro 26', 'categoria': 'venda',
+        })
+        novo = Post.objects.get(titulo='Bicicleta')
+        self.assertEqual(novo.status, 'publicado')
+        self.assertEqual(novo.origem, 'site')

@@ -1,9 +1,16 @@
+import json
+import secrets
+
+from django.conf import settings
+from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Count
-from .models import Post, Curtida, Comentario
+from .models import Post, Curtida, Comentario, MensagemRecebida
 from django.core.paginator import Paginator
 
 
@@ -19,7 +26,7 @@ def home(request):
     # annotate calcula as curtidas no banco, em vez de uma consulta por card.
     # A ordenacao explicita e necessaria porque o annotate agrupa a consulta e
     # descarta a ordenacao padrao do model, o que torna a paginacao instavel.
-    posts = Post.objects.select_related('usuario').annotate(
+    posts = Post.objects.filter(status='publicado').select_related('usuario').annotate(
         total_curtidas=Count('curtida', distinct=True)
     ).order_by('-data_criacao')
 
@@ -220,3 +227,85 @@ def comentar_post(request, post_id):
             )
 
     return redirect(f'/post/{post_id}/#comentarios')
+
+
+# ---------------------------------------------------------------------------
+# API de ingestao de mensagens
+# ---------------------------------------------------------------------------
+
+def _erro(mensagem, status):
+    return JsonResponse({'ok': False, 'erro': mensagem}, status=status)
+
+
+@csrf_exempt
+@require_POST
+def api_ingestao(request):
+    """Recebe uma mensagem enviada por um morador atraves de mensageria.
+
+    A view apenas valida e grava a mensagem crua. A interpretacao do texto e a
+    criacao do post sao etapas seguintes, feitas sobre o que foi gravado aqui.
+
+    O decorador csrf_exempt e necessario porque quem chama este endereco e um
+    servico externo, e nao um formulario do proprio site: nao existe sessao nem
+    token de CSRF nessa chamada. A autenticacao e feita pelo cabecalho
+    X-Ingestao-Token, comparado com o valor configurado em INGESTAO_TOKEN.
+    """
+    esperado = getattr(settings, 'INGESTAO_TOKEN', '')
+    recebido = request.headers.get('X-Ingestao-Token', '')
+
+    # compare_digest compara as duas cadeias em tempo constante, sem parar no
+    # primeiro caractere diferente. Isso evita que alguem descubra o token aos
+    # poucos, medindo quanto tempo cada tentativa demora a ser recusada.
+    if not esperado or not secrets.compare_digest(recebido, esperado):
+        return _erro('Token de ingestao ausente ou invalido.', 401)
+
+    try:
+        dados = json.loads(request.body.decode('utf-8'))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return _erro('O corpo da requisicao nao e um JSON valido.', 400)
+
+    if not isinstance(dados, dict):
+        return _erro('O JSON enviado deve ser um objeto.', 400)
+
+    canal = str(dados.get('canal') or '').strip().lower()
+    remetente = str(dados.get('remetente') or '').strip()
+    texto = str(dados.get('texto') or '').strip()
+    id_externo = str(dados.get('id_externo') or '').strip()
+
+    canais_validos = [c[0] for c in MensagemRecebida.CANAIS]
+    if canal not in canais_validos:
+        return _erro(
+            f'Canal invalido. Valores aceitos: {", ".join(canais_validos)}.', 400
+        )
+    if not remetente:
+        return _erro('O campo remetente e obrigatorio.', 400)
+    if not texto:
+        return _erro('O campo texto e obrigatorio.', 400)
+
+    # Se o canal reenviar a mesma mensagem, devolvemos o registro ja gravado em
+    # vez de duplicar. Webhooks costumam reenviar quando nao recebem resposta.
+    if id_externo:
+        existente = MensagemRecebida.objects.filter(
+            canal=canal, id_externo=id_externo
+        ).first()
+        if existente:
+            return JsonResponse({
+                'ok': True,
+                'duplicada': True,
+                'id': existente.id,
+                'status': existente.status,
+            }, status=200)
+
+    mensagem = MensagemRecebida.objects.create(
+        canal=canal,
+        remetente=remetente[:64],
+        texto=texto,
+        id_externo=id_externo[:128],
+    )
+
+    return JsonResponse({
+        'ok': True,
+        'duplicada': False,
+        'id': mensagem.id,
+        'status': mensagem.status,
+    }, status=201)
