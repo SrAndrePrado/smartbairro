@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
@@ -54,10 +55,17 @@
     </div>
 </nav>
 
+<!-- Regiao de anuncios para leitores de tela. Fica invisivel na tela, mas
+     tudo que o JavaScript escreve aqui e lido em voz alta, avisando quem nao
+     ve que algo mudou na pagina sem ela ter recarregado. -->
+<div id="anuncios" aria-live="polite" role="status" class="visually-hidden"></div>
+
 <main class="container">
     {% block content %}
     {% endblock %}
 </main>
+
+<script src="{% static 'posts/js/smartbairro.js' %}"></script>
 
 </body>
 </html>

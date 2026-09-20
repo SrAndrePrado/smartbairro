@@ -78,21 +78,25 @@
                     </a>
                 </div>
 
-                <form action="/curtir/{{ post.id }}/" method="POST">
+                <form action="/curtir/{{ post.id }}/" method="POST" data-curtir="{{ post.id }}">
                     {% csrf_token %}
 
                     {% if post.id in curtidas_usuario %}
-                        <button type="submit" class="btn btn-danger btn-sm">
-                            ❤️ Curtido
+                        <button type="submit" class="btn btn-danger btn-sm"
+                                aria-pressed="true"
+                                aria-label="Descurtir o post {{ post.titulo }}">
+                            Curtido
                         </button>
                     {% else %}
-                        <button type="submit" class="btn btn-outline-danger btn-sm">
-                            🤍 Curtir
+                        <button type="submit" class="btn btn-outline-danger btn-sm"
+                                aria-pressed="false"
+                                aria-label="Curtir o post {{ post.titulo }}">
+                            Curtir
                         </button>
                     {% endif %}
                 </form>
 
-                <p class="mt-2">{{ post.total_curtidas }} curtidas</p>
+                <p class="mt-2" data-contador-curtidas="{{ post.id }}">{{ post.total_curtidas }} curtida{{ post.total_curtidas|pluralize }}</p>
 
             </div>
 

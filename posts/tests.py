@@ -349,3 +349,98 @@ class TestRascunhoNaoAparece(BaseComDados):
         novo = Post.objects.get(titulo='Bicicleta')
         self.assertEqual(novo.status, 'publicado')
         self.assertEqual(novo.origem, 'site')
+
+
+# ===========================================================================
+# Endpoints JSON usados pelo JavaScript
+# ===========================================================================
+
+class TestApiCurtir(BaseComDados):
+    def url(self):
+        return f'/api/curtir/{self.post.id}/'
+
+    def test_anonimo_recebe_401_em_json(self):
+        r = self.client.post(self.url())
+        self.assertEqual(r.status_code, 401)
+        self.assertFalse(r.json()['ok'])
+        self.assertEqual(Curtida.objects.count(), 0)
+
+    def test_get_nao_e_aceito(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+        self.assertEqual(self.client.get(self.url()).status_code, 405)
+
+    def test_curtir_e_descurtir_devolvendo_total(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+
+        r1 = self.client.post(self.url())
+        self.assertEqual(r1.status_code, 200)
+        self.assertTrue(r1.json()['curtido'])
+        self.assertEqual(r1.json()['total'], 1)
+
+        r2 = self.client.post(self.url())
+        self.assertFalse(r2.json()['curtido'])
+        self.assertEqual(r2.json()['total'], 0)
+        self.assertEqual(Curtida.objects.count(), 0)
+
+    def test_nao_curte_post_em_rascunho(self):
+        self.post.status = 'rascunho'
+        self.post.save()
+        self.client.login(username='bob', password='senha-de-teste-123')
+        self.assertEqual(self.client.post(self.url()).status_code, 404)
+
+
+class TestApiComentar(BaseComDados):
+    def url(self):
+        return f'/api/comentar/{self.post.id}/'
+
+    def test_anonimo_recebe_401_em_json(self):
+        r = self.client.post(self.url(), {'texto': 'oi'})
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(Comentario.objects.count(), 0)
+
+    def test_texto_vazio_devolve_400_com_mensagem(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+        r = self.client.post(self.url(), {'texto': '   '})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('erro', r.json())
+        self.assertEqual(Comentario.objects.count(), 0)
+
+    def test_comentario_valido_devolve_o_comentario(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+        r = self.client.post(self.url(), {'texto': 'Ainda esta disponivel?'})
+        self.assertEqual(r.status_code, 201)
+        corpo = r.json()
+        self.assertEqual(corpo['comentario']['usuario'], 'bob')
+        self.assertEqual(corpo['comentario']['texto'], 'Ainda esta disponivel?')
+        self.assertEqual(corpo['total'], 1)
+        self.assertEqual(Comentario.objects.count(), 1)
+
+
+class TestFallbackSemJavaScript(BaseComDados):
+    """As rotas antigas continuam funcionando para quem esta sem JavaScript."""
+
+    def test_curtir_pela_rota_tradicional(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+        r = self.client.post(f'/curtir/{self.post.id}/')
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(Curtida.objects.count(), 1)
+
+    def test_comentar_pela_rota_tradicional(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+        r = self.client.post(f'/comentar/{self.post.id}/', {'texto': 'sem js'})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(Comentario.objects.count(), 1)
+
+    def test_pagina_carrega_o_script(self):
+        r = self.client.get('/')
+        self.assertContains(r, 'smartbairro.js')
+
+    def test_home_marca_o_formulario_para_o_javascript(self):
+        self.client.login(username='ana', password='senha-de-teste-123')
+        r = self.client.get('/')
+        self.assertContains(r, f'data-curtir="{self.post.id}"')
+        self.assertContains(r, 'aria-pressed')
+
+    def test_regiao_de_anuncios_existe(self):
+        r = self.client.get('/')
+        self.assertContains(r, 'aria-live="polite"')
