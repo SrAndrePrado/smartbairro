@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from pathlib import Path
 import os
 
+import dj_database_url
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -41,6 +43,11 @@ ALLOWED_HOSTS = [
 
 INSTALLED_APPS = [
     'posts',
+    # Apenas 'cloudinary' entra aqui. A biblioteca 'cloudinary_storage' fornece
+    # a classe de armazenamento, que e referenciada em STORAGES mais abaixo,
+    # mas nao deve ser registrada como app: a versao atual dela sobrescreve o
+    # comando collectstatic esperando uma configuracao que o Django 6 removeu.
+    'cloudinary',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -51,6 +58,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # WhiteNoise entrega os arquivos estaticos em producao. Precisa vir logo
+    # depois do SecurityMiddleware e antes de todo o resto.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -82,11 +92,15 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+# Em producao, DATABASE_URL aponta para um Postgres gerenciado, fora do
+# servidor da aplicacao. Sem essa variavel -- que e o caso na sua maquina --
+# o projeto continua usando o SQLite local, sem precisar configurar nada.
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 }
 
 
@@ -124,7 +138,43 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
+# --- Arquivos estaticos (CSS, JavaScript) ---------------------------------
+#
+# STATIC_ROOT e a pasta onde o comando collectstatic reune todos os arquivos
+# estaticos do projeto para serem servidos em producao. Em desenvolvimento o
+# Django encontra os arquivos sozinho e essa pasta nem e usada.
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# --- Onde os arquivos ficam guardados -------------------------------------
+#
+# "default" trata a midia enviada pelos usuarios (as fotos dos posts) e
+# "staticfiles" trata o CSS e o JavaScript do projeto.
+#
+# Em producao a midia vai para o Cloudinary, porque o disco do servidor e
+# apagado a cada reinicio. Se CLOUDINARY_URL nao estiver definida -- o caso da
+# sua maquina -- as fotos continuam sendo gravadas na pasta media/ local.
+USAR_CLOUDINARY = bool(os.environ.get('CLOUDINARY_URL'))
+
+STORAGES = {
+    'default': {
+        'BACKEND': (
+            'cloudinary_storage.storage.MediaCloudinaryStorage'
+            if USAR_CLOUDINARY
+            else 'django.core.files.storage.FileSystemStorage'
+        ),
+    },
+    'staticfiles': {
+        # Em producao, o WhiteNoise comprime os arquivos e adiciona um codigo
+        # ao nome de cada um. Assim o navegador pode guardar em cache para
+        # sempre, e ainda assim recebe a versao nova quando o arquivo muda.
+        'BACKEND': (
+            'django.contrib.staticfiles.storage.StaticFilesStorage'
+            if DEBUG
+            else 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        ),
+    },
+}
 
 # Sem esta linha o @login_required manda o usuario para /accounts/login/,
 # que nao existe neste projeto, resultando em 404.
@@ -132,6 +182,12 @@ STATIC_URL = 'static/'
 # mensagem no endpoint de ingestao. Em producao, defina INGESTAO_TOKEN no
 # ambiente com um valor longo e aleatorio.
 INGESTAO_TOKEN = os.environ.get('INGESTAO_TOKEN', 'token-de-desenvolvimento-trocar-em-producao')
+
+# Endereco do painel administrativo. Trocar o padrao /admin/ nao torna o
+# sistema mais seguro -- quem achar o endereco encontra a mesma tela de login.
+# O ganho e pratico: elimina o trafego de robos que varrem a internet batendo
+# em /admin/, o que tambem evita manter o servico gratuito acordado a toa.
+ADMIN_URL = os.environ.get('ADMIN_URL', 'admin/')
 
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'

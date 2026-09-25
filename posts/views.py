@@ -3,6 +3,7 @@ import secrets
 
 from django.conf import settings
 from django.http import JsonResponse
+from django.contrib.auth.views import LoginView
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -11,11 +12,44 @@ from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Count
 from .models import Post, Curtida, Comentario, MensagemRecebida
+from . import seguranca
 from django.core.paginator import Paginator
 
 
 # Categorias validas, derivadas do proprio model para nao duplicar a lista.
 CATEGORIAS_VALIDAS = [c[0] for c in Post.CATEGORIAS]
+
+# Limite de tamanho da imagem enviada, em megabytes.
+IMAGEM_MAX_MB = 5
+
+
+def validar_imagem(arquivo):
+    """Confere tamanho e se o arquivo e realmente uma imagem.
+
+    A validacao automatica do ImageField do Django so acontece quando se usa
+    um formulario do proprio Django. Como os posts sao criados direto pela
+    view, a checagem precisa ser feita aqui.
+
+    Devolve uma mensagem de erro, ou None se estiver tudo certo.
+    """
+    if not arquivo:
+        return None
+
+    if arquivo.size > IMAGEM_MAX_MB * 1024 * 1024:
+        return f'A imagem deve ter no maximo {IMAGEM_MAX_MB} MB.'
+
+    try:
+        from PIL import Image
+
+        imagem = Image.open(arquivo)
+        imagem.verify()
+    except Exception:
+        return 'O arquivo enviado nao e uma imagem valida.'
+    finally:
+        # verify() consome o arquivo; voltar ao inicio permite salva-lo depois.
+        arquivo.seek(0)
+
+    return None
 
 
 def home(request):
@@ -34,12 +68,17 @@ def home(request):
         posts = posts.filter(categoria=categoria)
 
     if busca:
-        posts = posts.filter(
+        filtro = (
             Q(titulo__icontains=busca) |
             Q(descricao__icontains=busca) |
-            Q(usuario__username__icontains=busca) |
-            Q(telefone__icontains=busca)
+            Q(usuario__username__icontains=busca)
         )
+        # A busca por telefone so vale para quem esta autenticado. Caso
+        # contrario, um visitante poderia descobrir os numeros dos moradores
+        # testando combinacoes, mesmo sem eles aparecerem na tela.
+        if request.user.is_authenticated:
+            filtro |= Q(telefone__icontains=busca)
+        posts = posts.filter(filtro)
 
     curtidas_usuario = []
     if request.user.is_authenticated:
@@ -74,6 +113,10 @@ def criar_post(request):
             erros.append('Informe uma descricao para o post.')
         if categoria not in CATEGORIAS_VALIDAS:
             erros.append('Escolha uma categoria valida.')
+
+        problema_imagem = validar_imagem(imagem)
+        if problema_imagem:
+            erros.append(problema_imagem)
 
         if erros:
             return render(request, 'posts/criar_post.html', {
@@ -149,6 +192,13 @@ def editar_post(request, post_id):
 
         nova_imagem = request.FILES.get('imagem')
         if nova_imagem:
+            problema_imagem = validar_imagem(nova_imagem)
+            if problema_imagem:
+                return render(request, 'posts/editar_post.html', {
+                    'post': post,
+                    'erros': [problema_imagem],
+                    'categorias': Post.CATEGORIAS,
+                }, status=400)
             post.imagem = nova_imagem
 
         post.save()
@@ -250,6 +300,10 @@ def api_ingestao(request):
     token de CSRF nessa chamada. A autenticacao e feita pelo cabecalho
     X-Ingestao-Token, comparado com o valor configurado em INGESTAO_TOKEN.
     """
+    if seguranca.excedeu('ingestao', request,
+                         seguranca.LIMITE_INGESTAO, seguranca.JANELA_INGESTAO):
+        return _erro('Muitas requisicoes. Tente novamente em instantes.', 429)
+
     esperado = getattr(settings, 'INGESTAO_TOKEN', '')
     recebido = request.headers.get('X-Ingestao-Token', '')
 
@@ -382,3 +436,23 @@ def api_comentar(request, post_id):
         },
         'total': post.comentario_set.count(),
     }, status=201)
+
+
+class LoginComLimite(LoginView):
+    """Tela de login que bloqueia tentativas repetidas do mesmo endereco.
+
+    Sem isso, alguem pode testar milhares de senhas automaticamente. O limite
+    nao impede o uso normal: dez tentativas em cinco minutos e muito mais do
+    que qualquer pessoa precisa para lembrar a propria senha.
+    """
+
+    template_name = 'posts/login.html'
+
+    def post(self, request, *args, **kwargs):
+        if seguranca.excedeu('login', request,
+                             seguranca.LIMITE_LOGIN, seguranca.JANELA_LOGIN):
+            return render(request, 'posts/login.html', {
+                'form': self.get_form(),
+                'bloqueado': True,
+            }, status=429)
+        return super().post(request, *args, **kwargs)
