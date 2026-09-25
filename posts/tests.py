@@ -444,3 +444,131 @@ class TestFallbackSemJavaScript(BaseComDados):
     def test_regiao_de_anuncios_existe(self):
         r = self.client.get('/')
         self.assertContains(r, 'aria-live="polite"')
+
+
+# ===========================================================================
+# Protecoes de seguranca
+# ===========================================================================
+
+from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
+
+from . import seguranca
+
+
+class TestTelefoneProtegido(BaseComDados):
+    """O telefone do morador nao aparece para quem nao esta autenticado."""
+
+    def test_visitante_nao_ve_o_telefone(self):
+        r = self.client.get('/')
+        self.assertNotContains(r, '11999999999')
+        self.assertContains(r, 'para ver o contato')
+
+    def test_usuario_logado_ve_o_telefone(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+        r = self.client.get('/')
+        self.assertContains(r, '11999999999')
+
+    def test_visitante_nao_busca_por_telefone(self):
+        r = self.client.get('/?busca=11999')
+        self.assertNotContains(r, 'Guarda-chuva preto')
+
+    def test_usuario_logado_busca_por_telefone(self):
+        self.client.login(username='bob', password='senha-de-teste-123')
+        r = self.client.get('/?busca=11999')
+        self.assertContains(r, 'Guarda-chuva preto')
+
+
+class TestLimiteDeTentativas(BaseComDados):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    def test_login_bloqueia_apos_muitas_tentativas(self):
+        for _ in range(seguranca.LIMITE_LOGIN):
+            r = self.client.post('/login/', {'username': 'ana', 'password': 'errada'})
+            self.assertNotEqual(r.status_code, 429)
+
+        r = self.client.post('/login/', {'username': 'ana', 'password': 'errada'})
+        self.assertEqual(r.status_code, 429)
+
+    def test_bloqueio_vale_mesmo_com_a_senha_certa(self):
+        """Impede que o atacante acerte na ultima tentativa e entre."""
+        for _ in range(seguranca.LIMITE_LOGIN):
+            self.client.post('/login/', {'username': 'ana', 'password': 'errada'})
+
+        r = self.client.post('/login/', {
+            'username': 'ana', 'password': 'senha-de-teste-123',
+        })
+        self.assertEqual(r.status_code, 429)
+
+    def test_ingestao_bloqueia_apos_muitas_requisicoes(self):
+        import json
+        from django.test import override_settings
+
+        with override_settings(INGESTAO_TOKEN='tok'):
+            corpo = json.dumps({'canal': 'teste', 'remetente': 'a', 'texto': 'oi'})
+            for _ in range(seguranca.LIMITE_INGESTAO):
+                self.client.post('/api/ingestao/', data=corpo,
+                                 content_type='application/json',
+                                 headers={'x-ingestao-token': 'tok'})
+
+            r = self.client.post('/api/ingestao/', data=corpo,
+                                 content_type='application/json',
+                                 headers={'x-ingestao-token': 'tok'})
+            self.assertEqual(r.status_code, 429)
+
+    def test_limite_conta_por_origem(self):
+        from django.test import RequestFactory
+        pedido = RequestFactory().get('/')
+        pedido.META['HTTP_X_FORWARDED_FOR'] = '203.0.113.9, 10.0.0.1'
+        self.assertEqual(seguranca.identificar_origem(pedido), '203.0.113.9')
+
+
+class TestUploadDeImagem(BaseComDados):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.client.login(username='ana', password='senha-de-teste-123')
+
+    def imagem_valida(self, tamanho=(20, 20)):
+        from io import BytesIO
+        from PIL import Image
+
+        buffer = BytesIO()
+        Image.new('RGB', tamanho, 'blue').save(buffer, format='PNG')
+        return SimpleUploadedFile('foto.png', buffer.getvalue(), 'image/png')
+
+    def test_arquivo_que_nao_e_imagem_e_recusado(self):
+        falso = SimpleUploadedFile('virus.png', b'isso nao e uma imagem', 'image/png')
+        r = self.client.post('/criar/', {
+            'titulo': 'T', 'descricao': 'D', 'categoria': 'venda', 'imagem': falso,
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(Post.objects.count(), 1)
+
+    def test_imagem_grande_demais_e_recusada(self):
+        from posts.views import IMAGEM_MAX_MB
+        grande = SimpleUploadedFile(
+            'grande.png', b'x' * ((IMAGEM_MAX_MB + 1) * 1024 * 1024), 'image/png',
+        )
+        r = self.client.post('/criar/', {
+            'titulo': 'T', 'descricao': 'D', 'categoria': 'venda', 'imagem': grande,
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(Post.objects.count(), 1)
+
+    def test_imagem_valida_e_aceita(self):
+        r = self.client.post('/criar/', {
+            'titulo': 'Sofa', 'descricao': 'Bom estado',
+            'categoria': 'venda', 'imagem': self.imagem_valida(),
+        })
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(Post.objects.count(), 2)
+
+
+class TestEnderecoDoAdmin(TestCase):
+    def test_admin_responde_no_endereco_configurado(self):
+        r = self.client.get('/admin/')
+        # Redireciona para o login do admin, o que prova que a rota existe.
+        self.assertIn(r.status_code, (200, 302))

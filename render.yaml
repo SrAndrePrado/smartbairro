@@ -1,0 +1,27 @@
+# Descreve o servico para o Render. Ter isso versionado no repositorio
+# significa que a configuracao do ambiente tambem esta sob controle de versao,
+# e nao apenas clicada no painel.
+services:
+  - type: web
+    name: smartbairro
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.0"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      # Definidas manualmente no painel do Render:
+      #   DATABASE_URL     -> string de conexao do Neon
+      #   CLOUDINARY_URL   -> credencial do Cloudinary
+      #   ALLOWED_HOSTS    -> dominio do servico no Render
+      #   INGESTAO_TOKEN   -> token do endpoint de ingestao
+      #   ADMIN_URL        -> endereco do painel, ex: painel-a7x9/
+      #   DJANGO_SUPERUSER_USERNAME / _EMAIL / _PASSWORD -> admin inicial
