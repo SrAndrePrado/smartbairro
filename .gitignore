@@ -6,3 +6,6 @@ media/
 staticfiles/
 .env
 .DS_Store
+
+# Dossie de organizacao pessoal - nao versionar
+DOSSIE-SmartBairro.md
