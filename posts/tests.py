@@ -4,13 +4,17 @@ Cada teste marcado com "REGRESSAO" cobre um bug que existia no entregavel do
 PI 1 e que quebrava a aplicacao ou corrompia dados em uso normal.
 """
 
+from io import StringIO
+
 from django.contrib.auth.models import User
+from django.core.management import call_command
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, SimpleTestCase
 from django.test.utils import CaptureQueriesContext
 from django.db import connection
 
-from .models import Post, Curtida, Comentario
+from .models import Post, Curtida, Comentario, MensagemRecebida
+from . import classificacao, ingestao
 
 
 class BaseComDados(TestCase):
@@ -236,7 +240,6 @@ import json
 
 from django.test import override_settings
 
-from .models import MensagemRecebida
 
 TOKEN = 'token-de-teste-123'
 
@@ -572,3 +575,263 @@ class TestEnderecoDoAdmin(TestCase):
         r = self.client.get('/admin/')
         # Redireciona para o login do admin, o que prova que a rota existe.
         self.assertIn(r.status_code, (200, 302))
+
+
+# ---------------------------------------------------------------------------
+# Interpretacao das mensagens recebidas
+# ---------------------------------------------------------------------------
+#
+# Estes testes usam SimpleTestCase, e nao TestCase: o modulo de classificacao
+# nao toca no banco de dados, entao nao ha motivo para o Django criar e
+# destruir um banco de teste para cada um. A suite fica mais rapida e o teste
+# documenta que aquela logica e independente do framework.
+
+
+class TestExtracaoDeTelefone(SimpleTestCase):
+    def test_encontra_formatos_comuns(self):
+        casos = [
+            ('Falar com (11) 98888-7777', '(11) 98888-7777'),
+            ('zap 11 99999-9999', '11 99999-9999'),
+            ('meu numero: 9999-8888', '9999-8888'),
+            ('tel (11)98888.7777', '(11)98888.7777'),
+            ('ligue 1140028922', '1140028922'),
+        ]
+        for texto, esperado in casos:
+            with self.subTest(texto=texto):
+                self.assertEqual(classificacao.extrair_telefone(texto), esperado)
+
+    def test_nao_confunde_preco_com_telefone(self):
+        """REGRESSAO: um valor em reais nao pode virar telefone do anunciante.
+
+        Publicar um preco no campo de contato exporia o post como se tivesse
+        telefone e deixaria o morador sem forma de ser encontrado.
+        """
+        self.assertEqual(classificacao.extrair_telefone('vendo por 200 reais'), '')
+        self.assertEqual(classificacao.extrair_telefone('R$ 1.200,00 a vista'), '')
+
+    def test_ignora_sequencia_longa_demais(self):
+        texto = 'pedido 2024000112233 entregue'
+        self.assertEqual(classificacao.extrair_telefone(texto), '')
+
+    def test_sem_telefone_devolve_vazio(self):
+        self.assertEqual(classificacao.extrair_telefone('bom dia a todos'), '')
+
+
+class TestEscolhaDeCategoria(SimpleTestCase):
+    def test_classifica_as_cinco_categorias(self):
+        casos = [
+            ('vendo sofa 3 lugares 200 reais', 'venda'),
+            ('Doando sofá bege, retirar no local', 'doacao'),
+            ('Faço aulas de reforço de matemática, atendo no bairro', 'servico'),
+            ('Encontrei um cachorro caramelo com coleira azul', 'achados'),
+            ('AVISO: manutenção da caixa d’água, não haverá água', 'aviso'),
+        ]
+        for texto, esperado in casos:
+            with self.subTest(texto=texto):
+                categoria, _ = classificacao.escolher_categoria(texto)
+                self.assertEqual(categoria, esperado)
+
+    def test_categorias_sugeridas_existem_no_model(self):
+        """Impede que uma categoria inventada aqui quebre a criacao do post."""
+        validas = {c[0] for c in Post.CATEGORIAS}
+        self.assertEqual(set(classificacao.PISTAS.keys()), validas)
+
+    def test_texto_sem_pista_nao_recebe_categoria(self):
+        categoria, pontos = classificacao.escolher_categoria('bom dia pessoal tudo bem?')
+        self.assertIsNone(categoria)
+        self.assertEqual(pontos, 0)
+
+    def test_empate_entre_categorias_nao_arrisca_palpite(self):
+        """Com pistas fortes de duas categorias, a decisao fica com o humano.
+
+        Errar a categoria em silencio e pior do que nao preencher: um post na
+        categoria errada desaparece do lugar onde o morador iria procurar.
+        """
+        texto = 'vendo a geladeira, mas tambem to doando se ninguem quiser comprar'
+        categoria, pontos = classificacao.escolher_categoria(texto)
+        self.assertIsNone(categoria)
+        self.assertGreater(pontos, 0)
+
+    def test_acento_e_caixa_nao_mudam_o_resultado(self):
+        a, _ = classificacao.escolher_categoria('DOAÇÃO de roupas')
+        b, _ = classificacao.escolher_categoria('doacao de roupas')
+        self.assertEqual(a, b)
+        self.assertEqual(a, 'doacao')
+
+
+class TestGeracaoDeTitulo(SimpleTestCase):
+    def test_remove_o_telefone_do_titulo(self):
+        texto = 'vendo sofa 3 lugares 200 reais zap 11 99999-9999'
+        titulo = classificacao.gerar_titulo(texto, '11 99999-9999')
+        self.assertNotIn('99999', titulo)
+
+    def test_descarta_palavra_de_ligacao_no_fim(self):
+        texto = 'vendo sofa 3 lugares 200 reais zap 11 99999-9999'
+        titulo = classificacao.gerar_titulo(texto, '11 99999-9999')
+        self.assertFalse(titulo.lower().endswith('zap'))
+
+    def test_respeita_o_limite_do_campo(self):
+        texto = 'palavra ' * 200
+        titulo = classificacao.gerar_titulo(texto)
+        self.assertLessEqual(len(titulo), 100)
+
+    def test_texto_vazio_recebe_titulo_generico(self):
+        self.assertEqual(classificacao.gerar_titulo(''), 'Mensagem recebida')
+
+    def test_primeira_letra_em_maiuscula(self):
+        self.assertTrue(classificacao.gerar_titulo('vendo bicicleta')[0].isupper())
+
+
+class TestInterpretacaoCompleta(SimpleTestCase):
+    def test_devolve_sugestao_pronta_para_virar_post(self):
+        r = classificacao.interpretar(
+            'Doando sofá bege em bom estado, retirar no local. Falar com (11) 98888-7777'
+        )
+        self.assertEqual(r['categoria'], 'doacao')
+        self.assertEqual(r['telefone'], '(11) 98888-7777')
+        self.assertTrue(r['confiavel'])
+        self.assertTrue(r['titulo'])
+
+    def test_descricao_preserva_o_texto_original(self):
+        """O que o morador escreveu e o registro do que ele quis dizer."""
+        texto = 'vendo   bike    aro 26!!! zap 11 99999-9999'
+        self.assertEqual(classificacao.interpretar(texto)['descricao'], texto)
+
+    def test_sem_confianca_sinaliza_para_triagem_manual(self):
+        r = classificacao.interpretar('oi gente, alguem sabe que horas abre o mercado?')
+        self.assertIsNone(r['categoria'])
+        self.assertFalse(r['confiavel'])
+
+    def test_nao_quebra_com_texto_vazio(self):
+        r = classificacao.interpretar('')
+        self.assertIsNone(r['categoria'])
+        self.assertEqual(r['descricao'], '')
+
+
+# ---------------------------------------------------------------------------
+# Criacao de rascunho a partir da mensagem recebida
+# ---------------------------------------------------------------------------
+
+
+class TestProcessamentoDeMensagem(TestCase):
+    def nova_mensagem(self, texto, **extra):
+        return MensagemRecebida.objects.create(
+            canal='teste', remetente='5511999998888', texto=texto, **extra
+        )
+
+    def test_mensagem_classificavel_vira_rascunho(self):
+        mensagem = self.nova_mensagem('Doando sofá bege, retirar no local')
+        post, motivo = ingestao.processar_mensagem(mensagem)
+
+        self.assertEqual(motivo, ingestao.CRIADO)
+        self.assertEqual(post.categoria, 'doacao')
+        self.assertEqual(post.status, 'rascunho')
+        self.assertEqual(post.origem, 'mensagem')
+
+    def test_mensagem_fica_vinculada_ao_post(self):
+        """O vinculo e o que permite reprocessar e auditar a origem do post."""
+        mensagem = self.nova_mensagem('vendo bicicleta aro 26 por 300 reais')
+        post, _ = ingestao.processar_mensagem(mensagem)
+
+        mensagem.refresh_from_db()
+        self.assertEqual(mensagem.post_id, post.id)
+        self.assertEqual(mensagem.status, 'processada')
+
+    def test_rascunho_gerado_nao_aparece_no_mural(self):
+        """REGRESSAO: o recebimento nao pode publicar sozinho.
+
+        E a garantia central do pipeline de moderacao. Se este teste falhar,
+        qualquer mensagem enviada ao numero do SmartBairro vai direto ao ar.
+        """
+        mensagem = self.nova_mensagem('vendo geladeira 500 reais')
+        post, _ = ingestao.processar_mensagem(mensagem)
+
+        resposta = self.client.get('/')
+        self.assertNotContains(resposta, post.titulo)
+
+    def test_sem_confianca_nao_cria_post_e_mantem_na_fila(self):
+        mensagem = self.nova_mensagem('bom dia pessoal, tudo certo por ai?')
+        post, motivo = ingestao.processar_mensagem(mensagem)
+
+        self.assertIsNone(post)
+        self.assertEqual(motivo, ingestao.SEM_CONFIANCA)
+
+        mensagem.refresh_from_db()
+        self.assertEqual(mensagem.status, 'pendente')
+        self.assertIsNone(mensagem.post_id)
+        self.assertIn('confianca', mensagem.erro.lower())
+
+    def test_nao_duplica_quando_processada_de_novo(self):
+        """Clicar duas vezes na acao do painel nao pode gerar dois posts."""
+        mensagem = self.nova_mensagem('vendo sofa 200 reais')
+        ingestao.processar_mensagem(mensagem)
+        mensagem.refresh_from_db()
+
+        post, motivo = ingestao.processar_mensagem(mensagem)
+        self.assertIsNone(post)
+        self.assertEqual(motivo, ingestao.JA_PROCESSADA)
+        self.assertEqual(Post.objects.filter(origem='mensagem').count(), 1)
+
+    def test_telefone_da_mensagem_vai_para_o_campo_de_contato(self):
+        mensagem = self.nova_mensagem('vendo mesa 150 reais zap (11) 98888-7777')
+        post, _ = ingestao.processar_mensagem(mensagem)
+        self.assertEqual(post.telefone, '(11) 98888-7777')
+        self.assertNotIn('98888', post.titulo)
+
+    def test_processar_pendentes_percorre_a_fila(self):
+        self.nova_mensagem('Doando roupas infantis, retirar no local')
+        self.nova_mensagem('vendo armario 400 reais')
+        self.nova_mensagem('oi gente, bom dia')
+
+        resumo = ingestao.processar_pendentes()
+        self.assertEqual(resumo[ingestao.CRIADO], 2)
+        self.assertEqual(resumo[ingestao.SEM_CONFIANCA], 1)
+
+
+class TestUsuarioDoSistema(TestCase):
+    def test_usuario_institucional_nao_consegue_autenticar(self):
+        """A conta existe para constar como autor, nunca para alguem entrar.
+
+        Ela nasce inativa e sem senha utilizavel; o Django recusa autenticacao
+        de usuario inativo mesmo que a senha estivesse correta.
+        """
+        usuario = ingestao.obter_usuario_sistema()
+        self.assertFalse(usuario.is_active)
+        self.assertFalse(usuario.has_usable_password())
+        self.assertFalse(self.client.login(username=usuario.username, password=''))
+
+    def test_reaproveita_a_mesma_conta(self):
+        primeiro = ingestao.obter_usuario_sistema()
+        segundo = ingestao.obter_usuario_sistema()
+        self.assertEqual(primeiro.id, segundo.id)
+        self.assertEqual(User.objects.filter(username=primeiro.username).count(), 1)
+
+
+class TestComandoClassificar(TestCase):
+    def test_comando_cria_rascunhos_das_pendentes(self):
+        MensagemRecebida.objects.create(
+            canal='teste', remetente='5511999998888',
+            texto='Faço aulas de reforço de matemática, atendo no bairro',
+        )
+        saida = StringIO()
+        call_command('classificar_mensagens', stdout=saida)
+
+        self.assertEqual(Post.objects.filter(status='rascunho').count(), 1)
+        self.assertIn('rascunho', saida.getvalue().lower())
+
+    def test_simular_nao_grava_nada(self):
+        """A simulacao serve para conferir o classificador sem efeito colateral."""
+        MensagemRecebida.objects.create(
+            canal='teste', remetente='5511999998888',
+            texto='vendo bicicleta aro 26 por 300 reais',
+        )
+        saida = StringIO()
+        call_command('classificar_mensagens', '--simular', stdout=saida)
+
+        self.assertEqual(Post.objects.count(), 0)
+        self.assertIn('venda', saida.getvalue())
+
+    def test_fila_vazia_nao_quebra(self):
+        saida = StringIO()
+        call_command('classificar_mensagens', stdout=saida)
+        self.assertIn('Nenhuma mensagem pendente', saida.getvalue())
