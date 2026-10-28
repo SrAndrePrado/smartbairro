@@ -67,6 +67,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Registro pseudonimizado de uso. Vem por ultimo de proposito: so
+    # grava depois que a resposta esta pronta, e uma falha dele nunca
+    # impede a pagina de ser entregue.
+    'posts.telemetria.RegistroDeUsoMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'

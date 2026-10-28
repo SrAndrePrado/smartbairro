@@ -11,6 +11,7 @@ urlpatterns = [
     path('login/', views.LoginComLimite.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(next_page='/')),
     path('cadastro/', views.cadastro),
+    path('privacidade/', views.politica_privacidade, name='privacidade'),
     path('curtir/<int:post_id>/', views.curtir_post),
     path('comentar/<int:post_id>/', views.comentar_post),
 
