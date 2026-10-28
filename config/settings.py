@@ -216,7 +216,7 @@ if not DEBUG:
 # ---------------------------------------------------------------------------
 #
 # Esta configuracao existe para corrigir um comportamento padrao do Django que
-# e facil de nao perceber: na configuracao embutida, o escoadouro de console
+# e facil de nao perceber: na configuracao embutida, o handler de console
 # carrega o filtro require_debug_true, e o de e-mail carrega require_debug_false.
 #
 # Em desenvolvimento, portanto, tudo aparece no terminal. Em producao o console
@@ -230,7 +230,7 @@ if not DEBUG:
 # no log do servico.
 LOGGING = {
     'version': 1,
-    # Nao desliga os registradores que outras bibliotecas ja tenham criado.
+    # Nao desliga os loggers que outras bibliotecas ja tenham criado.
     'disable_existing_loggers': False,
 
     'formatters': {

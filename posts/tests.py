@@ -1075,10 +1075,10 @@ class TestConfiguracaoDeLog(SimpleTestCase):
         O padrao do Django filtra o console com require_debug_true e manda o
         erro por e-mail em producao. Sem servidor de e-mail, o traceback some.
         """
-        registrador = logging.getLogger('django.request')
-        escoadouros = [type(h).__name__ for h in registrador.handlers]
-        self.assertIn('StreamHandler', escoadouros)
-        self.assertFalse(registrador.propagate)
+        logger = logging.getLogger('django.request')
+        handlers = [type(h).__name__ for h in logger.handlers]
+        self.assertIn('StreamHandler', handlers)
+        self.assertFalse(logger.propagate)
 
     def test_console_nao_depende_de_debug(self):
         """O filtro require_debug_true e justamente o que precisa nao existir."""
@@ -1087,8 +1087,8 @@ class TestConfiguracaoDeLog(SimpleTestCase):
                 self.assertNotIn('debug', type(f).__name__.lower())
 
     def test_codigo_da_aplicacao_tambem_registra(self):
-        registrador = logging.getLogger('posts')
-        self.assertTrue(registrador.handlers)
+        logger = logging.getLogger('posts')
+        self.assertTrue(logger.handlers)
 
 
 class TestFalhaDaTelemetriaFicaVisivel(TestCase):
