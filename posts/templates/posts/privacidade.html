@@ -1,0 +1,161 @@
+{% extends 'posts/base.html' %}
+
+{% block content %}
+
+<article class="py-3" style="max-width: 46rem;">
+
+    <h1>Aviso de Privacidade</h1>
+    <p class="text-muted">
+        Versão {{ versao }} — atualizado em {{ atualizado_em|date:"d/m/Y" }}
+    </p>
+
+    <p>
+        Este aviso descreve como o SmartBairro trata dados pessoais, em
+        atendimento à Lei nº 13.709/2018 (Lei Geral de Proteção de Dados).
+    </p>
+
+    <div class="alert alert-secondary" role="note">
+        O SmartBairro é um projeto acadêmico, desenvolvido pelo Grupo 21 no
+        Projeto Integrador da Universidade Virtual do Estado de São Paulo
+        (UNIVESP). Não é um serviço comercial e não há finalidade lucrativa no
+        tratamento dos dados descritos aqui.
+    </div>
+
+    <h2 class="h4 mt-4">1. Quais dados são tratados</h2>
+
+    <p><strong>Dados de conta.</strong> Ao se cadastrar, são armazenados o nome
+    de usuário escolhido e a senha. A senha é guardada apenas como resumo
+    criptográfico (<em>hash</em>): ela não pode ser lida nem recuperada por
+    quem administra o sistema.</p>
+
+    <p><strong>Conteúdo publicado.</strong> Título, descrição, categoria, data
+    e, quando o morador opta por informar, imagem e telefone de contato. Esse
+    conteúdo é público por natureza — é o que forma o mural do bairro.</p>
+
+    <p><strong>Interações.</strong> Curtidas e comentários ficam vinculados à
+    conta que os realizou.</p>
+
+    <p><strong>Mensagens recebidas por canal externo.</strong> Quando um morador
+    envia uma mensagem ao número do SmartBairro, são armazenados o canal de
+    origem, o identificador do remetente (normalmente o número de telefone), o
+    texto integral da mensagem e a data de recebimento.</p>
+
+    <p><strong>Registro de uso.</strong> Páginas visitadas, categoria
+    filtrada e termo buscado, associados a um identificador sorteado por visita.
+    Detalhado na seção 6.</p>
+
+    <p><strong>Dado técnico temporário.</strong> O endereço de origem das
+    requisições é mantido em memória por alguns minutos, exclusivamente para
+    limitar tentativas repetidas de login e de envio automatizado. Esse registro
+    expira sozinho e não é gravado em banco de dados.</p>
+
+    <h2 class="h4 mt-4">2. Para que os dados são usados</h2>
+
+    <p>Os dados têm uma única finalidade: operar o mural de avisos do bairro —
+    permitir que moradores publiquem, encontrem e respondam a anúncios,
+    serviços, avisos e achados e perdidos da comunidade.</p>
+
+    <p>Não há uso para publicidade, não há venda ou compartilhamento de dados
+    com terceiros para fins comerciais, e não há decisão automatizada que
+    produza efeitos jurídicos sobre as pessoas.</p>
+
+    <h2 class="h4 mt-4">3. Bases legais</h2>
+
+    <p>O tratamento dos dados de conta e do conteúdo publicado no site apoia-se
+    na execução do próprio serviço solicitado pelo titular (art. 7º, V).</p>
+
+    <p>O tratamento das mensagens recebidas por canal externo apoia-se no
+    <strong>consentimento</strong> do titular (art. 7º, I), registrado no momento
+    do primeiro contato e revogável a qualquer tempo.</p>
+
+    <h2 class="h4 mt-4">4. Proteção dos dados de contato</h2>
+
+    <p>O telefone informado em uma publicação <strong>não é enviado ao navegador
+    de visitantes não autenticados</strong>. Quem não está logado vê um convite
+    para entrar, e não o número. A busca por telefone também é restrita a
+    usuários autenticados, para que não seja possível descobrir números testando
+    combinações no campo de busca.</p>
+
+    <p>A medida aplica o princípio da necessidade (art. 6º, III): o tratamento
+    limita-se ao mínimo necessário para que moradores identificados consigam
+    entrar em contato entre si.</p>
+
+    <h2 class="h4 mt-4">5. Moderação antes da publicação</h2>
+
+    <p>Mensagens recebidas por canal externo não são publicadas
+    automaticamente. Elas passam por uma fila de triagem e só aparecem no mural
+    após aprovação. Isso permite recusar conteúdo que exponha dados de
+    terceiros sem autorização.</p>
+
+    <h2 class="h4 mt-4">6. Registro de uso do site</h2>
+
+    <p>Para entender quais informações a comunidade mais procura e onde a
+    navegação se interrompe, o SmartBairro registra as páginas visitadas. São
+    armazenados o endereço da página, a data e hora, a categoria filtrada, o
+    termo digitado na busca e a indicação de que havia ou não alguém
+    autenticado — sem dizer quem.</p>
+
+    <p>Cada visita recebe um <strong>identificador sorteado</strong>, que serve
+    apenas para ordenar as páginas de uma mesma sessão. Ele não deriva de
+    nenhum dado da pessoa. <strong>Não são registrados o endereço de origem, a
+    identificação da conta, o nome de usuário nem o navegador utilizado.</strong></p>
+
+    <p>Tratamos esse registro como <strong>pseudonimizado, e não anônimo</strong>:
+    enquanto a sessão existir e houver login, a reassociação seria tecnicamente
+    possível por quem tem acesso ao banco de dados. A LGPD considera dado
+    pseudonimizado como dado pessoal, e afirmar anonimato aqui seria impreciso.</p>
+
+    <p>Esses registros são apagados automaticamente após 90 dias. A base legal é
+    o legítimo interesse (art. 7º, IX) em manter e aprimorar o serviço,
+    limitado ao mínimo necessário para essa finalidade.</p>
+
+    <p>O painel administrativo não é registrado: ele é trabalho de manutenção do
+    grupo, não uso da comunidade.</p>
+
+    <h2 class="h4 mt-4">7. Por quanto tempo os dados são mantidos</h2>
+
+    <p>O conteúdo publicado permanece disponível enquanto for útil à comunidade
+    ou até que o titular solicite sua remoção. As mensagens recebidas são
+    mantidas vinculadas à publicação gerada, como registro do que foi
+    efetivamente enviado. Encerrada a disciplina a que este projeto pertence, os
+    dados poderão ser integralmente eliminados.</p>
+
+    <h2 class="h4 mt-4">8. Com quem os dados são compartilhados</h2>
+
+    <p>A aplicação funciona sobre serviços de terceiros que atuam como
+    operadores: hospedagem da aplicação, banco de dados gerenciado e
+    armazenamento das imagens enviadas. Esses serviços processam os dados
+    exclusivamente para manter o sistema no ar, sem finalidade própria.</p>
+
+    <h2 class="h4 mt-4">9. Direitos do titular</h2>
+
+    <p>O art. 18 da LGPD assegura a qualquer pessoa, a respeito dos seus dados:
+    confirmação da existência de tratamento; acesso aos dados; correção de dados
+    incompletos, inexatos ou desatualizados; anonimização, bloqueio ou
+    eliminação de dados desnecessários ou tratados em desconformidade com a lei;
+    portabilidade; informação sobre compartilhamento; informação sobre a
+    possibilidade de não consentir e suas consequências; e revogação do
+    consentimento.</p>
+
+    <p>No SmartBairro, a revogação do consentimento interrompe o uso das
+    mensagens enviadas pelo canal externo, e a solicitação de eliminação remove
+    o identificador do remetente e os dados de contato associados.</p>
+
+    <h2 class="h4 mt-4">10. Como exercer esses direitos</h2>
+
+    <div class="alert alert-warning" role="note">
+        <strong>A preencher pelo grupo antes da entrega:</strong> canal de
+        contato para solicitações de titulares (endereço de e-mail do grupo ou
+        formulário), e prazo de resposta assumido. Sem um canal informado, o
+        aviso não cumpre o art. 18, §2º.
+    </div>
+
+    <h2 class="h4 mt-4">11. Alterações neste aviso</h2>
+
+    <p>Alterações relevantes geram uma nova versão, identificada no topo desta
+    página. O consentimento registrado guarda a versão vigente no momento em que
+    foi concedido.</p>
+
+</article>
+
+{% endblock %}

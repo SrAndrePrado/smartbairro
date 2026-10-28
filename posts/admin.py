@@ -1,7 +1,7 @@
 from django.contrib import admin
 
-from . import classificacao, ingestao
-from .models import Post, Curtida, Comentario, MensagemRecebida
+from . import classificacao, exportacao, ingestao
+from .models import Post, Curtida, Comentario, MensagemRecebida, EventoDeUso
 
 
 @admin.register(Post)
@@ -67,6 +67,36 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
             request,
             '. '.join(partes) + '. Os rascunhos continuam aguardando aprovação em Posts.'
         )
+
+
+@admin.register(EventoDeUso)
+class EventoDeUsoAdmin(admin.ModelAdmin):
+    """Somente leitura: o registro de uso e gravado pelo middleware.
+
+    Permitir edicao aqui tornaria os dados imprestaveis para analise e abriria
+    a porta para alterar um registro depois do fato.
+    """
+
+    list_display = ('ocorrido_em', 'caminho', 'categoria', 'busca',
+                    'autenticado', 'visita')
+    list_filter = ('autenticado', 'categoria', 'ocorrido_em')
+    search_fields = ('caminho', 'busca')
+    date_hierarchy = 'ocorrido_em'
+    actions = ['exportar_eventos', 'exportar_visitas']
+
+    @admin.action(description='Exportar selecionados para CSV (uma linha por página vista)')
+    def exportar_eventos(self, request, queryset):
+        return exportacao.exportar_eventos_csv(queryset)
+
+    @admin.action(description='Exportar resumo de visitas para CSV (uma linha por visita)')
+    def exportar_visitas(self, request, queryset):
+        return exportacao.exportar_visitas_csv(queryset)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 admin.site.register(Curtida)

@@ -11,10 +11,11 @@ from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase, SimpleTestCase
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.db import connection
 
-from .models import Post, Curtida, Comentario, MensagemRecebida
-from . import classificacao, ingestao
+from .models import Post, Curtida, Comentario, MensagemRecebida, EventoDeUso
+from . import classificacao, ingestao, privacidade
 
 
 class BaseComDados(TestCase):
@@ -835,3 +836,229 @@ class TestComandoClassificar(TestCase):
         saida = StringIO()
         call_command('classificar_mensagens', stdout=saida)
         self.assertIn('Nenhuma mensagem pendente', saida.getvalue())
+
+# ---------------------------------------------------------------------------
+# Aviso de privacidade
+# ---------------------------------------------------------------------------
+
+
+class TestAvisoDePrivacidade(TestCase):
+    def test_pagina_abre_para_visitante_nao_autenticado(self):
+        """O aviso tem que ser legivel por quem ainda nao tem conta.
+
+        Exigir login para ler a politica inverteria a logica: a pessoa decide
+        se quer se cadastrar depois de saber o que sera feito com os dados.
+        """
+        resposta = self.client.get('/privacidade/')
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_informa_a_versao_vigente(self):
+        resposta = self.client.get('/privacidade/')
+        self.assertContains(resposta, privacidade.POLITICA_VERSAO)
+
+    def test_link_aparece_em_todas_as_paginas(self):
+        """O rodape fica no base.html, entao vale para o site inteiro."""
+        for caminho in ['/', '/login/', '/cadastro/']:
+            with self.subTest(caminho=caminho):
+                self.assertContains(self.client.get(caminho), '/privacidade/')
+
+    def test_descreve_os_dados_que_o_sistema_realmente_coleta(self):
+        """REGRESSAO: aviso que descreve errado o sistema e pior que nenhum.
+
+        Se um campo novo passar a ser coletado e o aviso nao mencionar, o
+        tratamento fica sem a informacao exigida pelo art. 9 da LGPD.
+        """
+        corpo = self.client.get('/privacidade/').content.decode()
+        for termo in ['senha', 'telefone', 'comentários', 'mensagem']:
+            with self.subTest(termo=termo):
+                self.assertIn(termo, corpo.lower())
+
+    def test_cita_a_lei_e_os_direitos_do_titular(self):
+        corpo = self.client.get('/privacidade/').content.decode()
+        self.assertIn('13.709', corpo)
+        self.assertIn('art. 18', corpo.lower())
+
+# ---------------------------------------------------------------------------
+# Registro pseudonimizado de uso
+# ---------------------------------------------------------------------------
+
+
+class TestRegistroDeUso(TestCase):
+    def test_pagina_vista_gera_um_evento(self):
+        self.client.get('/')
+        self.assertEqual(EventoDeUso.objects.count(), 1)
+        self.assertEqual(EventoDeUso.objects.get().caminho, '/')
+
+    def test_guarda_categoria_e_termo_buscado(self):
+        self.client.get('/?categoria=venda&busca=bicicleta')
+        evento = EventoDeUso.objects.get()
+        self.assertEqual(evento.categoria, 'venda')
+        self.assertEqual(evento.busca, 'bicicleta')
+
+    def test_nao_guarda_quem_e_a_pessoa(self):
+        """O registro diz que havia alguem logado, nunca quem era.
+
+        Se este teste falhar, o aviso de privacidade passa a descrever errado o
+        sistema: ele afirma que a conta nao e vinculada ao registro de uso.
+        """
+        User.objects.create_user('carla', password='senha-de-teste-123')
+        self.client.login(username='carla', password='senha-de-teste-123')
+        self.client.get('/')
+
+        evento = EventoDeUso.objects.get()
+        self.assertTrue(evento.autenticado)
+
+        campos = {c.name for c in EventoDeUso._meta.get_fields()}
+        self.assertNotIn('usuario', campos)
+        self.assertNotIn('ip', campos)
+        for valor in evento.__dict__.values():
+            self.assertNotIn('carla', str(valor))
+
+    def test_paginas_da_mesma_visita_compartilham_o_identificador(self):
+        self.client.get('/')
+        self.client.get('/cadastro/')
+        visitas = set(EventoDeUso.objects.values_list('visita', flat=True))
+        self.assertEqual(len(visitas), 1)
+
+    def test_identificador_nao_deriva_do_usuario(self):
+        self.client.get('/')
+        visita = EventoDeUso.objects.get().visita
+        self.assertEqual(len(visita), 16)
+        self.assertNotIn('carla', visita)
+
+    def test_nao_registra_o_painel_administrativo(self):
+        """O painel e manutencao do grupo, nao uso da comunidade."""
+        self.client.get('/admin/')
+        self.assertEqual(EventoDeUso.objects.count(), 0)
+
+    def test_nao_registra_envio_de_formulario(self):
+        self.client.post('/login/', {'username': 'x', 'password': 'y'})
+        self.assertEqual(EventoDeUso.objects.count(), 0)
+
+    def test_nao_registra_pagina_inexistente(self):
+        self.client.get('/caminho-que-nao-existe/')
+        self.assertEqual(EventoDeUso.objects.count(), 0)
+
+    def test_falha_do_registro_nao_derruba_a_pagina(self):
+        """REGRESSAO: telemetria nunca pode quebrar o site.
+
+        Se a gravacao falhar - banco fora do ar, migration pendente -, a pessoa
+        tem que receber a pagina do mesmo jeito.
+        """
+        from unittest.mock import patch
+        with patch.object(EventoDeUso.objects, 'create', side_effect=Exception('banco fora')):
+            resposta = self.client.get('/')
+        self.assertEqual(resposta.status_code, 200)
+
+
+class TestRetencaoDeEventos(TestCase):
+    def test_apaga_eventos_alem_do_prazo(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        antigo = EventoDeUso.objects.create(visita='a' * 16, caminho='/')
+        recente = EventoDeUso.objects.create(visita='b' * 16, caminho='/')
+        EventoDeUso.objects.filter(pk=antigo.pk).update(
+            ocorrido_em=timezone.now() - timedelta(days=120)
+        )
+
+        call_command('limpar_eventos', stdout=StringIO())
+
+        self.assertFalse(EventoDeUso.objects.filter(pk=antigo.pk).exists())
+        self.assertTrue(EventoDeUso.objects.filter(pk=recente.pk).exists())
+
+    def test_simular_nao_apaga(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        evento = EventoDeUso.objects.create(visita='c' * 16, caminho='/')
+        EventoDeUso.objects.filter(pk=evento.pk).update(
+            ocorrido_em=timezone.now() - timedelta(days=120)
+        )
+        call_command('limpar_eventos', '--simular', stdout=StringIO())
+        self.assertTrue(EventoDeUso.objects.filter(pk=evento.pk).exists())
+
+
+class TestAvisoCobreORegistroDeUso(TestCase):
+    def test_aviso_declara_o_registro_de_uso(self):
+        """O aviso tem que descrever o que o middleware realmente grava."""
+        corpo = self.client.get('/privacidade/').content.decode().lower()
+        for termo in ['registro de uso', 'pseudonimizado', '90 dias']:
+            with self.subTest(termo=termo):
+                self.assertIn(termo, corpo)
+
+    def test_aviso_afirma_o_que_nao_e_coletado(self):
+        corpo = self.client.get('/privacidade/').content.decode().lower()
+        self.assertIn('não são registrados o endereço de origem', corpo)
+
+# ---------------------------------------------------------------------------
+# Exportacao em CSV
+# ---------------------------------------------------------------------------
+
+
+class TestExportacaoCsv(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            'chefe', 'chefe@example.com', 'senha-de-teste-123'
+        )
+        self.client.login(username='chefe', password='senha-de-teste-123')
+
+    def gerar_uso(self):
+        self.client.logout()
+        self.client.get('/')
+        self.client.get('/?busca=bicicleta')
+        self.client.get('/cadastro/')
+        self.client.login(username='chefe', password='senha-de-teste-123')
+
+    def baixar(self, acao):
+        self.gerar_uso()
+        ids = list(EventoDeUso.objects.values_list('pk', flat=True))
+        return self.client.post(
+            reverse('admin:posts_eventodeuso_changelist'),
+            {'action': acao, '_selected_action': ids},
+        )
+
+    def test_exporta_eventos_como_arquivo(self):
+        resposta = self.baixar('exportar_eventos')
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIn('attachment', resposta['Content-Disposition'])
+        self.assertIn('smartbairro_uso.csv', resposta['Content-Disposition'])
+
+    def test_csv_usa_ponto_e_virgula_e_bom(self):
+        """Sem isso o Excel em portugues abre tudo numa coluna so e com acento quebrado."""
+        conteudo = self.baixar('exportar_eventos').content
+        self.assertTrue(conteudo.startswith(b'\xef\xbb\xbf'))
+        primeira = conteudo.decode('utf-8-sig').splitlines()[0]
+        self.assertIn(';', primeira)
+        self.assertNotIn(',', primeira)
+
+    def test_csv_traz_as_colunas_derivadas(self):
+        corpo = self.baixar('exportar_eventos').content.decode('utf-8-sig')
+        cabecalho = corpo.splitlines()[0]
+        for coluna in ['data', 'hora', 'dia_da_semana', 'secao', 'busca', 'visita']:
+            with self.subTest(coluna=coluna):
+                self.assertIn(coluna, cabecalho)
+
+    def test_exportacao_nao_vaza_identificacao(self):
+        """REGRESSAO: o CSV sai do sistema e circula. Nao pode levar quem e."""
+        corpo = self.baixar('exportar_eventos').content.decode('utf-8-sig')
+        self.assertNotIn('chefe', corpo)
+
+    def test_resumo_de_visitas_agrupa_por_visita(self):
+        resposta = self.baixar('exportar_visitas')
+        corpo = resposta.content.decode('utf-8-sig')
+        linhas = [l for l in corpo.splitlines() if l.strip()]
+
+        self.assertIn('smartbairro_visitas.csv', resposta['Content-Disposition'])
+        self.assertIn('ultima_pagina', linhas[0])
+        # tres paginas vistas na mesma sessao viram uma linha de visita
+        self.assertEqual(len(linhas), 2)
+        self.assertIn('3', linhas[1].split(';'))
+
+    def test_visitante_sem_painel_nao_exporta(self):
+        self.client.logout()
+        resposta = self.client.post(
+            reverse('admin:posts_eventodeuso_changelist'),
+            {'action': 'exportar_eventos', '_selected_action': ['1']},
+        )
+        self.assertNotEqual(resposta.status_code, 200)

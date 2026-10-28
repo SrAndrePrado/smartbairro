@@ -13,6 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Count
 from .models import Post, Curtida, Comentario, MensagemRecebida
 from . import seguranca
+from .privacidade import POLITICA_VERSAO, POLITICA_ATUALIZADA_EM
 from django.core.paginator import Paginator
 
 
@@ -456,3 +457,15 @@ class LoginComLimite(LoginView):
                 'bloqueado': True,
             }, status=429)
         return super().post(request, *args, **kwargs)
+
+
+def politica_privacidade(request):
+    """Exibe o aviso de privacidade vigente.
+
+    A versao vem do modulo privacidade e nao do template, para que a pagina e o
+    registro de consentimento falem sempre da mesma versao.
+    """
+    return render(request, 'posts/privacidade.html', {
+        'versao': POLITICA_VERSAO,
+        'atualizado_em': POLITICA_ATUALIZADA_EM,
+    })

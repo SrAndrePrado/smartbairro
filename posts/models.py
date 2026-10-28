@@ -127,3 +127,32 @@ class MensagemRecebida(models.Model):
 
     def __str__(self):
         return f"{self.get_canal_display()} - {self.texto[:40]}"
+
+
+class EventoDeUso(models.Model):
+    """Registro pseudonimizado de uma pagina vista.
+
+    Guarda o necessario para responder tres perguntas: quais paginas e
+    categorias sao mais procuradas, o que a comunidade busca, e em que ponto as
+    visitas se interrompem.
+
+    Nao guarda endereco de origem nem vinculo com a conta. O campo visita e um
+    numero sorteado, que permite ordenar as paginas de uma mesma sessao sem
+    identificar quem navegou. Ver posts/telemetria.py para o detalhe de por que
+    o tratamento e descrito como pseudonimizado, e nao como anonimo.
+    """
+
+    visita = models.CharField(max_length=32, db_index=True)
+    caminho = models.CharField(max_length=200)
+    ocorrido_em = models.DateTimeField(auto_now_add=True, db_index=True)
+    autenticado = models.BooleanField(default=False)
+    categoria = models.CharField(max_length=20, blank=True)
+    busca = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        ordering = ['-ocorrido_em']
+        verbose_name = 'evento de uso'
+        verbose_name_plural = 'eventos de uso'
+
+    def __str__(self):
+        return f'{self.ocorrido_em:%d/%m %H:%M} {self.caminho}'
