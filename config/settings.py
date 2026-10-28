@@ -209,3 +209,61 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+
+# ---------------------------------------------------------------------------
+# Registro de erros
+# ---------------------------------------------------------------------------
+#
+# Esta configuracao existe para corrigir um comportamento padrao do Django que
+# e facil de nao perceber: na configuracao embutida, o handler de console
+# carrega o filtro require_debug_true, e o de e-mail carrega require_debug_false.
+#
+# Em desenvolvimento, portanto, tudo aparece no terminal. Em producao o console
+# e desligado e o unico caminho passa a ser o e-mail para os ADMINS. Sem
+# servidor de e-mail configurado - que e o caso aqui -, o traceback de um erro
+# 500 nao vai a lugar nenhum: o log mostra a requisicao e o codigo do erro, e
+# nada sobre a causa.
+#
+# A configuracao abaixo manda tudo para o console sem condicao de DEBUG. O
+# Render captura a saida padrao do processo, entao o traceback passa a aparecer
+# no log do servico.
+LOGGING = {
+    'version': 1,
+    # Nao desliga os loggers que outras bibliotecas ja tenham criado.
+    'disable_existing_loggers': False,
+
+    'formatters': {
+        'padrao': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
+    },
+
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'padrao',
+        },
+    },
+
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+
+    'loggers': {
+        # Erros nao tratados durante uma requisicao, com traceback completo.
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        # Mensagens emitidas pelo proprio codigo da aplicacao.
+        'posts': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
