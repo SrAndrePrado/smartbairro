@@ -19,12 +19,15 @@ o tratamento e descrito como PSEUDONIMIZADO, e nao como anonimo: a LGPD trata
 dado pseudonimizado como dado pessoal, e afirmar anonimato aqui seria impreciso.
 """
 
+import logging
 import secrets
 import time
 
 from django.conf import settings
 
 from .models import EventoDeUso
+
+logger = logging.getLogger(__name__)
 
 # Uma visita termina depois deste tempo sem nenhuma requisicao. E a definicao
 # usual de sessao em analise de uso: passado esse intervalo, o retorno conta
@@ -97,6 +100,11 @@ class RegistroDeUsoMiddleware:
                     busca=(request.GET.get('busca') or '').strip()[:100],
                 )
         except Exception:
-            pass
+            # Engolir a excecao mantem o site de pe, mas engolir em silencio
+            # tornaria uma falha de gravacao indistinguivel de "ninguem
+            # navegou". logger.exception registra o traceback completo sem
+            # interromper a resposta: a pessoa recebe a pagina e o problema
+            # fica visivel no log.
+            logger.exception('Falha ao registrar evento de uso')
 
         return resposta

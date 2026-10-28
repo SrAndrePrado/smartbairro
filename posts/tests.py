@@ -4,6 +4,7 @@ Cada teste marcado com "REGRESSAO" cobre um bug que existia no entregavel do
 PI 1 e que quebrava a aplicacao ou corrompia dados em uso normal.
 """
 
+import logging
 from io import StringIO
 
 from django.contrib.auth.models import User
@@ -11,7 +12,6 @@ from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase, SimpleTestCase
 from django.test.utils import CaptureQueriesContext
-from django.urls import reverse
 from django.db import connection
 
 from .models import Post, Curtida, Comentario, MensagemRecebida, EventoDeUso
@@ -1014,7 +1014,7 @@ class TestExportacaoCsv(TestCase):
         self.gerar_uso()
         ids = list(EventoDeUso.objects.values_list('pk', flat=True))
         return self.client.post(
-            reverse('admin:posts_eventodeuso_changelist'),
+            '/admin/posts/eventodeuso/',
             {'action': acao, '_selected_action': ids},
         )
 
@@ -1058,7 +1058,54 @@ class TestExportacaoCsv(TestCase):
     def test_visitante_sem_painel_nao_exporta(self):
         self.client.logout()
         resposta = self.client.post(
-            reverse('admin:posts_eventodeuso_changelist'),
+            '/admin/posts/eventodeuso/',
             {'action': 'exportar_eventos', '_selected_action': ['1']},
         )
         self.assertNotEqual(resposta.status_code, 200)
+
+# ---------------------------------------------------------------------------
+# Registro de erros
+# ---------------------------------------------------------------------------
+
+
+class TestConfiguracaoDeLog(SimpleTestCase):
+    def test_erro_de_requisicao_vai_para_o_console(self):
+        """REGRESSAO: sem isso, erro 500 em producao nao deixa rastro.
+
+        O padrao do Django filtra o console com require_debug_true e manda o
+        erro por e-mail em producao. Sem servidor de e-mail, o traceback some.
+        """
+        registrador = logging.getLogger('django.request')
+        escoadouros = [type(h).__name__ for h in registrador.handlers]
+        self.assertIn('StreamHandler', escoadouros)
+        self.assertFalse(registrador.propagate)
+
+    def test_console_nao_depende_de_debug(self):
+        """O filtro require_debug_true e justamente o que precisa nao existir."""
+        for h in logging.getLogger('django.request').handlers:
+            for f in getattr(h, 'filters', []):
+                self.assertNotIn('debug', type(f).__name__.lower())
+
+    def test_codigo_da_aplicacao_tambem_registra(self):
+        registrador = logging.getLogger('posts')
+        self.assertTrue(registrador.handlers)
+
+
+class TestFalhaDaTelemetriaFicaVisivel(TestCase):
+    def test_falha_ao_gravar_evento_e_registrada(self):
+        """Engolir a excecao mantem o site de pe; engolir calado esconde o bug.
+
+        Era a segunda cegueira: tela vazia de eventos ficava igual a "ninguem
+        navegou". Agora a falha aparece no log e a pagina continua sendo
+        entregue.
+        """
+        from unittest.mock import patch
+
+        with patch.object(EventoDeUso.objects, 'create',
+                          side_effect=Exception('banco fora do ar')):
+            with self.assertLogs('posts.telemetria', level='ERROR') as capturado:
+                resposta = self.client.get('/')
+
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIn('Falha ao registrar evento de uso', capturado.output[0])
+        self.assertIn('banco fora do ar', capturado.output[0])
