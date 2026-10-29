@@ -1,7 +1,8 @@
 from django.contrib import admin
 
 from . import classificacao, exportacao, ingestao
-from .models import Post, Curtida, Comentario, MensagemRecebida, EventoDeUso
+from .models import (Post, Curtida, Comentario, MensagemRecebida,
+                     EventoDeUso, Consentimento)
 
 
 @admin.register(Post)
@@ -20,11 +21,11 @@ class PostAdmin(admin.ModelAdmin):
 @admin.register(MensagemRecebida)
 class MensagemRecebidaAdmin(admin.ModelAdmin):
     list_display = ('recebida_em', 'canal', 'remetente', 'resumo',
-                    'categoria_sugerida', 'status', 'post')
+                    'categoria_sugerida', 'consentido', 'status', 'post')
     list_filter = ('canal', 'status')
     search_fields = ('texto', 'remetente', 'id_externo')
     readonly_fields = ('recebida_em',)
-    actions = ['classificar_selecionadas']
+    actions = ['classificar_selecionadas', 'esquecer_remetentes']
 
     @admin.display(description='Mensagem')
     def resumo(self, obj):
@@ -47,9 +48,49 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
         rotulo = dict(Post.CATEGORIAS).get(sugestao['categoria'], sugestao['categoria'])
         return f"{rotulo} ({sugestao['pontuacao']})"
 
+    @admin.display(description='Consentimento', boolean=True)
+    def consentido(self, obj):
+        """Mostra na fila se ha consentimento ativo para aquele remetente.
+
+        Sem esta coluna o moderador so descobriria a ausencia depois de rodar a
+        acao e ler o resumo, o que transforma uma informacao em uma tentativa.
+        """
+        return ingestao.tem_consentimento(obj.canal, obj.remetente)
+
+    @admin.action(description='Atender pedido de exclusão do remetente (LGPD art. 18, VI)')
+    def esquecer_remetentes(self, request, queryset):
+        """Apaga os dados pessoais dos remetentes das mensagens selecionadas.
+
+        Age sobre a PESSOA, e nao sobre as mensagens marcadas: selecionar uma
+        mensagem apaga tudo daquele remetente naquele canal. Atender mensagem a
+        mensagem deixaria as outras para tras, e um pedido de exclusao atendido
+        pela metade nao foi atendido.
+
+        As publicacoes geradas sao mantidas, apenas sem o telefone de contato.
+        Para apagar tambem as publicacoes, use o comando esquecer_remetente com
+        --apagar-posts, que exige a decisao explicita de quem opera.
+        """
+        resumo = {'mensagens_apagadas': 0, 'posts_anonimizados': 0,
+                  'consentimento_revogado': 0}
+
+        for canal, remetente in ingestao.remetentes_distintos(queryset):
+            r = ingestao.esquecer_remetente(canal, remetente)
+            resumo['mensagens_apagadas'] += r['mensagens_apagadas']
+            resumo['posts_anonimizados'] += r['posts_anonimizados']
+            resumo['consentimento_revogado'] += int(r['consentimento_revogado'])
+
+        self.message_user(
+            request,
+            f"{resumo['mensagens_apagadas']} mensagem(ns) apagada(s), "
+            f"{resumo['posts_anonimizados']} publicação(ões) sem telefone, "
+            f"{resumo['consentimento_revogado']} consentimento(s) revogado(s). "
+            'Operação irreversível.'
+        )
+
     @admin.action(description='Classificar e criar rascunho das mensagens selecionadas')
     def classificar_selecionadas(self, request, queryset):
-        resumo = {ingestao.CRIADO: 0, ingestao.SEM_CONFIANCA: 0, ingestao.JA_PROCESSADA: 0}
+        resumo = {ingestao.CRIADO: 0, ingestao.SEM_CONFIANCA: 0,
+                  ingestao.SEM_CONSENTIMENTO: 0, ingestao.JA_PROCESSADA: 0}
 
         for mensagem in queryset:
             _, motivo = ingestao.processar_mensagem(mensagem)
@@ -59,6 +100,10 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
         if resumo[ingestao.SEM_CONFIANCA]:
             partes.append(
                 f"{resumo[ingestao.SEM_CONFIANCA]} sem confiança, mantida(s) na fila"
+            )
+        if resumo[ingestao.SEM_CONSENTIMENTO]:
+            partes.append(
+                f"{resumo[ingestao.SEM_CONSENTIMENTO]} sem consentimento do remetente"
             )
         if resumo[ingestao.JA_PROCESSADA]:
             partes.append(f"{resumo[ingestao.JA_PROCESSADA]} já processada(s)")
@@ -97,6 +142,19 @@ class EventoDeUsoAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(Consentimento)
+class ConsentimentoAdmin(admin.ModelAdmin):
+    list_display = ('remetente', 'canal', 'concedido_em', 'politica_versao',
+                    'situacao', 'revogado_em')
+    list_filter = ('canal', 'politica_versao')
+    search_fields = ('remetente',)
+    readonly_fields = ('concedido_em',)
+
+    @admin.display(description='Ativo', boolean=True)
+    def situacao(self, obj):
+        return obj.ativo
 
 
 admin.site.register(Curtida)

@@ -14,9 +14,11 @@ quanto por linha de comando sem duplicar codigo.
 
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.utils import timezone
 
 from . import classificacao
-from .models import Post, MensagemRecebida
+from .privacidade import POLITICA_VERSAO
+from .models import Post, MensagemRecebida, Consentimento
 
 # Nome do usuario que figura como autor dos posts nascidos de mensagens.
 #
@@ -48,7 +50,34 @@ def obter_usuario_sistema():
 # Motivos devolvidos por processar_mensagem, para o chamador montar o resumo.
 CRIADO = 'criado'
 SEM_CONFIANCA = 'sem_confianca'
+SEM_CONSENTIMENTO = 'sem_consentimento'
 JA_PROCESSADA = 'ja_processada'
+
+
+def registrar_consentimento(canal, remetente):
+    """Grava o consentimento do remetente, ou reativa um que fora revogado.
+
+    Devolve o registro. A versao da politica vigente fica gravada junto: sem
+    ela nao seria possivel dizer com que texto a pessoa concordou.
+    """
+    registro, criado = Consentimento.objects.get_or_create(
+        canal=canal,
+        remetente=remetente,
+        defaults={'politica_versao': POLITICA_VERSAO},
+    )
+    if not criado and registro.revogado_em is not None:
+        # Quem revogou e voltou a consentir recomeca sob a politica atual.
+        registro.revogado_em = None
+        registro.politica_versao = POLITICA_VERSAO
+        registro.save(update_fields=['revogado_em', 'politica_versao'])
+    return registro
+
+
+def tem_consentimento(canal, remetente):
+    """Diz se ha consentimento ativo para aquele remetente naquele canal."""
+    return Consentimento.objects.filter(
+        canal=canal, remetente=remetente, revogado_em__isnull=True
+    ).exists()
 
 
 def processar_mensagem(mensagem, forcar=False):
@@ -62,6 +91,18 @@ def processar_mensagem(mensagem, forcar=False):
     """
     if mensagem.post_id and not forcar:
         return None, JA_PROCESSADA
+
+    # Receber uma mensagem e guarda-la e uma coisa; publicar o conteudo dela e
+    # outra. A segunda depende de consentimento do titular, verificado aqui e
+    # nao na recepcao: a mensagem precisa ser gravada de qualquer forma, nem
+    # que seja para registrar que chegou sem autorizacao de uso.
+    if not tem_consentimento(mensagem.canal, mensagem.remetente):
+        mensagem.erro = (
+            'Sem consentimento ativo registrado para este remetente. '
+            'O conteudo nao pode ser publicado (Lei 13.709/2018, art. 7, I).'
+        )
+        mensagem.save(update_fields=['erro'])
+        return None, SEM_CONSENTIMENTO
 
     sugestao = classificacao.interpretar(mensagem.texto)
 
@@ -111,8 +152,86 @@ def processar_pendentes(limite=None):
     if limite:
         fila = fila[:limite]
 
-    resumo = {CRIADO: 0, SEM_CONFIANCA: 0, JA_PROCESSADA: 0}
+    resumo = {CRIADO: 0, SEM_CONFIANCA: 0, SEM_CONSENTIMENTO: 0, JA_PROCESSADA: 0}
     for mensagem in fila:
         _, motivo = processar_mensagem(mensagem)
         resumo[motivo] += 1
     return resumo
+
+
+# ---------------------------------------------------------------------------
+# Direito a eliminacao (Lei 13.709/2018, art. 18, VI)
+# ---------------------------------------------------------------------------
+
+# O identificador some, mas a linha do consentimento permanece: ela registra
+# que houve revogacao e quando, sem dizer de quem. E o que responde, mais
+# tarde, "voces atenderam aquele pedido?".
+MARCA_REMOVIDO = '[removido a pedido do titular]'
+
+
+def esquecer_remetente(canal, remetente, apagar_posts=False):
+    """Atende um pedido de eliminacao de dados feito pelo titular.
+
+    O que acontece:
+      - o consentimento e revogado e o identificador, anonimizado;
+      - as mensagens cruas daquele remetente sao apagadas;
+      - o telefone de contato sai dos posts que nasceram delas.
+
+    O que NAO acontece por padrao: apagar os posts. Um anuncio sem telefone e
+    sem remetente deixou de identificar alguem, e pode ser conteudo que a
+    comunidade ainda usa. Mas o parametro apagar_posts existe porque a decisao
+    e do titular, nao nossa - se ele pedir a remocao completa, o pedido manda.
+
+    Fora do alcance desta rotina: comentarios e curtidas feitos por uma CONTA
+    do site. Sao outra identidade, com outra base legal, e se apagam pelo
+    cadastro do usuario.
+
+    Devolve um resumo com as contagens, para quem chamou relatar ao titular o
+    que foi feito.
+    """
+    mensagens = MensagemRecebida.objects.filter(canal=canal, remetente=remetente)
+    ids_de_posts = [m.post_id for m in mensagens if m.post_id]
+
+    resumo = {
+        'mensagens_apagadas': 0,
+        'posts_anonimizados': 0,
+        'posts_apagados': 0,
+        'consentimento_revogado': False,
+    }
+
+    # Tudo numa transacao: um pedido de exclusao atendido pela metade seria
+    # pior do que um nao atendido, porque ninguem saberia o que sobrou.
+    with transaction.atomic():
+        registro = Consentimento.objects.filter(
+            canal=canal, remetente=remetente
+        ).first()
+        if registro:
+            # A marca leva a chave da propria linha porque canal + remetente e
+            # unico: sem isso, o segundo pedido de exclusao no mesmo canal
+            # colidiria com o primeiro. A chave nao revela nada sobre a pessoa.
+            registro.remetente = f'{MARCA_REMOVIDO}#{registro.pk}'[:64]
+            registro.revogado_em = timezone.now()
+            registro.save(update_fields=['remetente', 'revogado_em'])
+            resumo['consentimento_revogado'] = True
+
+        posts = Post.objects.filter(id__in=ids_de_posts)
+        if apagar_posts:
+            resumo['posts_apagados'] = posts.count()
+            posts.delete()
+        else:
+            resumo['posts_anonimizados'] = posts.update(telefone='')
+
+        resumo['mensagens_apagadas'] = mensagens.count()
+        mensagens.delete()
+
+    return resumo
+
+
+def remetentes_distintos(queryset):
+    """Extrai os pares (canal, remetente) unicos de um conjunto de mensagens.
+
+    Usado pela acao do painel: o moderador seleciona mensagens, mas o pedido de
+    exclusao e da PESSOA - atender uma mensagem de cada vez deixaria as outras
+    daquele mesmo remetente para tras.
+    """
+    return sorted(set(queryset.values_list('canal', 'remetente')))
