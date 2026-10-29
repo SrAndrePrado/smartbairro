@@ -89,11 +89,18 @@
 
     <h2 class="h4 mt-4">6. Registro de uso do site</h2>
 
-    <p>Para entender quais informações a comunidade mais procura e onde a
-    navegação se interrompe, o SmartBairro registra as páginas visitadas. São
+    <p>Para entender quais informações a comunidade mais procura, onde a
+    navegação se interrompe e em que pontos o sistema recusa uma ação, o
+    SmartBairro registra as páginas visitadas e os envios de formulário. São
     armazenados o endereço da página, a data e hora, a categoria filtrada, o
-    termo digitado na busca e a indicação de que havia ou não alguém
-    autenticado — sem dizer quem.</p>
+    termo digitado na busca, o código de retorno da resposta, o tempo de
+    processamento e a indicação de que havia ou não alguém autenticado — sem
+    dizer quem.</p>
+
+    <p>O <strong>conteúdo</strong> dos formulários não é armazenado: do envio
+    guarda-se apenas que ele ocorreu, para qual endereço e se foi aceito ou
+    recusado. Envios das telas de entrada e de cadastro ficam inteiramente
+    fora do registro, por envolverem credenciais.</p>
 
     <p>Cada visita recebe um <strong>identificador sorteado</strong>, que serve
     apenas para ordenar as páginas de uma mesma sessão. Ele não deriva de
@@ -110,7 +117,9 @@
     limitado ao mínimo necessário para essa finalidade.</p>
 
     <p>O painel administrativo não é registrado: ele é trabalho de manutenção do
-    grupo, não uso da comunidade.</p>
+    grupo, não uso da comunidade. Também são descartadas as visitas de
+    rastreadores automatizados — o programa do navegador é consultado apenas
+    para fazer essa distinção, e não é armazenado.</p>
 
     <h2 class="h4 mt-4">7. Por quanto tempo os dados são mantidos</h2>
 
@@ -158,6 +167,13 @@
     <p>Alterações relevantes geram uma nova versão, identificada no topo desta
     página. O consentimento registrado guarda a versão vigente no momento em que
     foi concedido.</p>
+
+    <p><strong>Versão 1.1</strong> (30/10/2026): o registro de uso passou a
+    incluir os envios de formulário, o código de retorno da resposta e o tempo
+    de processamento, e passou a descartar visitas de rastreadores
+    automatizados. Nenhum dado identificador foi acrescentado.</p>
+
+    <p><strong>Versão 1.0</strong> (28/10/2026): versão inicial.</p>
 
 </article>
 

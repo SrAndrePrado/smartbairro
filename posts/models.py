@@ -149,6 +149,18 @@ class EventoDeUso(models.Model):
     categoria = models.CharField(max_length=20, blank=True)
     busca = models.CharField(max_length=100, blank=True)
 
+    # Codigo HTTP da resposta. Guardar isso permite contar nao so o que foi
+    # visto, mas o que foi RECUSADO: uma tentativa de publicar sem titulo
+    # devolve 400 e vira uma linha aqui. Recusa nao e defeito tecnico, e sinal
+    # de usabilidade - se muita gente e barrada, o formulario pede demais.
+    status = models.PositiveSmallIntegerField(default=200, db_index=True)
+
+    # Tempo de processamento do servidor, em milissegundos. Nao inclui a espera
+    # de quando o servico esta hibernando: naquele periodo o Django nem esta
+    # rodando, entao nenhum middleware executa. Medir a hibernacao exige
+    # cronometrar de fora da aplicacao.
+    duracao_ms = models.PositiveIntegerField(default=0)
+
     class Meta:
         ordering = ['-ocorrido_em']
         verbose_name = 'evento de uso'

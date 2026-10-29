@@ -19,6 +19,17 @@ DIAS_DA_SEMANA = ['segunda', 'terça', 'quarta', 'quinta', 'sexta',
                   'sábado', 'domingo']
 
 
+def _mediana(valores):
+    """Mediana de uma lista de inteiros, ou zero se estiver vazia."""
+    if not valores:
+        return 0
+    ordenados = sorted(valores)
+    meio = len(ordenados) // 2
+    if len(ordenados) % 2:
+        return ordenados[meio]
+    return (ordenados[meio - 1] + ordenados[meio]) // 2
+
+
 def _secao(caminho):
     """Agrupa o caminho numa secao legivel, para facilitar o agrupamento.
 
@@ -75,13 +86,17 @@ def exportar_eventos_csv(queryset):
             e.categoria,
             e.busca,
             'sim' if e.autenticado else 'nao',
+            e.status,
+            'sim' if e.status < 400 else 'nao',
+            e.duracao_ms,
             e.visita,
         ])
 
     return _resposta_csv(
         'smartbairro_uso.csv',
         ['ocorrido_em', 'data', 'hora', 'dia_da_semana', 'caminho', 'secao',
-         'categoria', 'busca', 'autenticado', 'visita'],
+         'categoria', 'busca', 'autenticado', 'status', 'aceito',
+         'duracao_ms', 'visita'],
         linhas,
     )
 
@@ -98,7 +113,7 @@ def exportar_visitas_csv(queryset):
         v = visitas.setdefault(e.visita, {
             'inicio': e.ocorrido_em, 'fim': e.ocorrido_em,
             'paginas': 0, 'ultimo': e.caminho, 'autenticado': False,
-            'buscas': 0,
+            'buscas': 0, 'recusas': 0, 'duracoes': [],
         })
         v['fim'] = e.ocorrido_em
         v['paginas'] += 1
@@ -106,6 +121,9 @@ def exportar_visitas_csv(queryset):
         v['autenticado'] = v['autenticado'] or e.autenticado
         if e.busca:
             v['buscas'] += 1
+        if e.status >= 400:
+            v['recusas'] += 1
+        v['duracoes'].append(e.duracao_ms)
 
     linhas = []
     for identificador, v in visitas.items():
@@ -121,6 +139,11 @@ def exportar_visitas_csv(queryset):
             v['ultimo'],
             _secao(v['ultimo']),
             v['buscas'],
+            v['recusas'],
+            # Mediana, e nao media: uma unica requisicao lenta - tipicamente a
+            # primeira apos a hibernacao - distorceria a media da visita
+            # inteira e faria o site parecer pior do que e.
+            _mediana(v['duracoes']),
             'sim' if v['autenticado'] else 'nao',
         ])
     linhas.sort(key=lambda l: l[1])
@@ -129,6 +152,6 @@ def exportar_visitas_csv(queryset):
         'smartbairro_visitas.csv',
         ['visita', 'inicio', 'data', 'dia_da_semana', 'paginas_vistas',
          'duracao_segundos', 'ultima_pagina', 'secao_de_saida', 'buscas',
-         'teve_login'],
+         'recusas', 'ms_mediana', 'teve_login'],
         linhas,
     )

@@ -5,6 +5,7 @@ PI 1 e que quebrava a aplicacao ou corrompia dados em uso normal.
 """
 
 import logging
+import re
 from io import StringIO
 
 from django.contrib.auth.models import User
@@ -897,7 +898,28 @@ class TestAvisoDePrivacidade(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestRegistroDeUso(TestCase):
+# User-Agent de navegador real. O cliente de teste do Django nao envia nenhum,
+# e o middleware de telemetria descarta requisicao sem identificacao por
+# considera-la automatizada - navegador de pessoa sempre manda um.
+NAVEGADOR_DE_TESTE = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                      'AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/120.0 Safari/537.36')
+
+
+class ComNavegador:
+    """Faz o cliente de teste se identificar como navegador.
+
+    Sem isso o filtro de robos descarta a requisicao e nenhum evento de uso e
+    gravado, o que faria qualquer teste de telemetria falhar por um motivo que
+    nao tem relacao com o que ele quer verificar.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client.defaults['HTTP_USER_AGENT'] = NAVEGADOR_DE_TESTE
+
+
+class TestRegistroDeUso(ComNavegador, TestCase):
     def test_pagina_vista_gera_um_evento(self):
         self.client.get('/')
         self.assertEqual(EventoDeUso.objects.count(), 1)
@@ -947,10 +969,6 @@ class TestRegistroDeUso(TestCase):
 
     def test_nao_registra_envio_de_formulario(self):
         self.client.post('/login/', {'username': 'x', 'password': 'y'})
-        self.assertEqual(EventoDeUso.objects.count(), 0)
-
-    def test_nao_registra_pagina_inexistente(self):
-        self.client.get('/caminho-que-nao-existe/')
         self.assertEqual(EventoDeUso.objects.count(), 0)
 
     def test_falha_do_registro_nao_derruba_a_pagina(self):
@@ -1010,8 +1028,9 @@ class TestAvisoCobreORegistroDeUso(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestExportacaoCsv(TestCase):
+class TestExportacaoCsv(ComNavegador, TestCase):
     def setUp(self):
+        super().setUp()
         self.admin = User.objects.create_superuser(
             'chefe', 'chefe@example.com', 'senha-de-teste-123'
         )
@@ -1105,7 +1124,7 @@ class TestConfiguracaoDeLog(SimpleTestCase):
         self.assertTrue(logger.handlers)
 
 
-class TestFalhaDaTelemetriaFicaVisivel(TestCase):
+class TestFalhaDaTelemetriaFicaVisivel(ComNavegador, TestCase):
     def test_falha_ao_gravar_evento_e_registrada(self):
         """Engolir a excecao mantem o site de pe; engolir calado esconde o bug.
 
@@ -1374,3 +1393,127 @@ class TestComandoEsquecerRemetente(TestCase):
         with self.assertRaises(CommandError):
             call_command('esquecer_remetente', '--canal', 'pombo',
                          '--remetente', '5511999998888', stdout=StringIO())
+
+
+# ---------------------------------------------------------------------------
+# Filtro de robos, codigo de retorno e tempo de resposta
+# ---------------------------------------------------------------------------
+
+
+class TestFiltroDeRobos(TestCase):
+    NAVEGADOR = NAVEGADOR_DE_TESTE
+
+    def test_visita_de_pessoa_e_registrada(self):
+        self.client.get('/', headers={'user-agent': self.NAVEGADOR})
+        self.assertEqual(EventoDeUso.objects.count(), 1)
+
+    def test_rastreadores_conhecidos_sao_descartados(self):
+        """Sem isso a analise mede robo em vez de morador."""
+        agentes = [
+            'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'Mozilla/5.0 (compatible; bingbot/2.0)',
+            'python-requests/2.31.0',
+            'curl/8.4.0',
+            'facebookexternalhit/1.1',
+            'Mozilla/5.0 AhrefsBot/7.0',
+        ]
+        for agente in agentes:
+            with self.subTest(agente=agente[:28]):
+                EventoDeUso.objects.all().delete()
+                self.client.get('/', headers={'user-agent': agente})
+                self.assertEqual(EventoDeUso.objects.count(), 0)
+
+    def test_requisicao_sem_identificacao_e_descartada(self):
+        """Navegador de pessoa sempre manda User-Agent."""
+        self.client.get('/', headers={'user-agent': ''})
+        self.assertEqual(EventoDeUso.objects.count(), 0)
+
+    def test_programa_do_navegador_nao_e_armazenado(self):
+        """REGRESSAO: o User-Agent e lido para decidir, nunca guardado.
+
+        O aviso de privacidade afirma isso. Se um campo passar a guarda-lo, a
+        pagina publicada vira declaracao falsa.
+        """
+        self.client.get('/', headers={'user-agent': self.NAVEGADOR})
+        evento = EventoDeUso.objects.get()
+        for valor in evento.__dict__.values():
+            self.assertNotIn('Mozilla', str(valor))
+        self.assertNotIn('agente', {c.name for c in EventoDeUso._meta.get_fields()})
+
+
+@override_settings(ALLOWED_HOSTS=['testserver'])
+class TestCodigoDeRetornoETempo(TestCase):
+    NAVEGADOR = 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0 Safari/537.36'
+
+    def navegar(self, caminho, metodo='get', **extra):
+        funcao = getattr(self.client, metodo)
+        return funcao(caminho, headers={'user-agent': self.NAVEGADOR}, **extra)
+
+    def test_guarda_o_codigo_de_retorno(self):
+        self.navegar('/')
+        self.assertEqual(EventoDeUso.objects.get().status, 200)
+
+    def test_guarda_o_tempo_de_processamento(self):
+        self.navegar('/')
+        self.assertGreaterEqual(EventoDeUso.objects.get().duracao_ms, 0)
+
+    def test_pagina_inexistente_tambem_e_registrada(self):
+        """Antes so o 200 entrava, entao erro de navegacao era invisivel."""
+        self.navegar('/caminho-que-nao-existe/')
+        self.assertEqual(EventoDeUso.objects.get().status, 404)
+
+    def test_recusa_de_publicacao_vira_registro(self):
+        """E o que a equipe pediu: contar quantas tentativas sao barradas.
+
+        Recusa nao e defeito tecnico - o sistema funcionou como projetado. E
+        sinal de usabilidade: se muita gente e barrada, o formulario pede
+        demais, o que conversa com a justificativa do projeto.
+        """
+        User.objects.create_user('duda', password='senha-de-teste-123')
+        self.client.login(username='duda', password='senha-de-teste-123')
+        EventoDeUso.objects.all().delete()
+
+        self.navegar('/criar/', 'post', data={'titulo': '', 'descricao': 'x'})
+
+        evento = EventoDeUso.objects.filter(caminho='/criar/').last()
+        self.assertIsNotNone(evento)
+        self.assertEqual(evento.status, 400)
+
+    def test_envio_de_credencial_nao_e_registrado(self):
+        """Login e cadastro ficam fora: envolvem credencial."""
+        self.navegar('/login/', 'post',
+                     data={'username': 'x', 'password': 'y'})
+        self.assertFalse(EventoDeUso.objects.filter(caminho='/login/').exists())
+
+    def test_pagina_de_login_vista_continua_sendo_registrada(self):
+        """So o ENVIO fica de fora; a visita a tela e navegacao normal."""
+        self.navegar('/login/')
+        self.assertTrue(EventoDeUso.objects.filter(caminho='/login/').exists())
+
+
+class TestAvisoCobreAsMetricas(TestCase):
+    def test_versao_subiu_junto_com_a_mudanca(self):
+        """Mudar o que se coleta sem versionar o aviso o tornaria falso."""
+        self.assertEqual(privacidade.POLITICA_VERSAO, '1.1')
+        corpo = self.client.get('/privacidade/').content.decode()
+        self.assertIn('1.1', corpo)
+
+    def test_aviso_declara_os_dados_novos(self):
+        # O HTML quebra linha no meio das frases, entao comparar texto cru
+        # falharia por formatacao e nao por conteudo ausente.
+        corpo = re.sub(r'\s+', ' ',
+                       self.client.get('/privacidade/').content.decode().lower())
+        for termo in ['código de retorno', 'tempo de processamento',
+                      'rastreadores', 'envios de formulário']:
+            with self.subTest(termo=termo):
+                self.assertIn(termo, corpo)
+
+    def test_aviso_nega_guardar_conteudo_de_formulario(self):
+        corpo = re.sub(r'\s+', ' ',
+                       self.client.get('/privacidade/').content.decode().lower())
+        self.assertIn('não é armazenado', corpo)
+
+    def test_historico_de_versoes_esta_publicado(self):
+        corpo = self.client.get('/privacidade/').content.decode()
+        self.assertIn('Versão 1.0', corpo)
+        self.assertIn('Versão 1.1', corpo)
