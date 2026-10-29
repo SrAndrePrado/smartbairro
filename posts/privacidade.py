@@ -12,5 +12,5 @@ valendo para o que foi coletado naquele periodo.
 
 from datetime import date
 
-POLITICA_VERSAO = '1.0'
-POLITICA_ATUALIZADA_EM = date(2026, 10, 28)
+POLITICA_VERSAO = '1.1'
+POLITICA_ATUALIZADA_EM = date(2026, 10, 30)
