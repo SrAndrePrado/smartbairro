@@ -156,3 +156,47 @@ class EventoDeUso(models.Model):
 
     def __str__(self):
         return f'{self.ocorrido_em:%d/%m %H:%M} {self.caminho}'
+
+
+class Consentimento(models.Model):
+    """Registro de que um remetente autorizou a publicacao das suas mensagens.
+
+    O consentimento pertence a PESSOA, nao a mensagem. Quem envia pelo canal
+    externo concorda uma vez, no primeiro contato, e aquilo vale para os envios
+    seguintes ate ser revogado. Guardar um registro por mensagem repetiria o
+    mesmo dado e tornaria a revogacao trabalhosa, porque seria preciso varrer
+    todas as mensagens em vez de desligar um unico registro.
+
+    O campo politica_versao existe porque o texto do aviso de privacidade pode
+    mudar. Sem ele, seria impossivel dizer com o que cada pessoa concordou de
+    fato - o que esvazia o proprio registro.
+
+    A revogacao nao apaga a linha: marca a data em revogado_em. Isso preserva a
+    prova de que houve consentimento durante determinado periodo, que e o que
+    responde a pergunta "com que base voces publicaram aquilo em setembro?".
+    """
+
+    canal = models.CharField(max_length=20, choices=MensagemRecebida.CANAIS)
+    remetente = models.CharField(max_length=64)
+    concedido_em = models.DateTimeField(auto_now_add=True)
+    politica_versao = models.CharField(max_length=20)
+    revogado_em = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-concedido_em']
+        verbose_name = 'consentimento'
+        verbose_name_plural = 'consentimentos'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['canal', 'remetente'],
+                name='consentimento_unico_por_canal_e_remetente',
+            )
+        ]
+
+    def __str__(self):
+        situacao = 'revogado' if self.revogado_em else 'ativo'
+        return f'{self.get_canal_display()} {self.remetente} ({situacao})'
+
+    @property
+    def ativo(self):
+        return self.revogado_em is None

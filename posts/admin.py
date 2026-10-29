@@ -1,7 +1,8 @@
 from django.contrib import admin
 
 from . import classificacao, exportacao, ingestao
-from .models import Post, Curtida, Comentario, MensagemRecebida, EventoDeUso
+from .models import (Post, Curtida, Comentario, MensagemRecebida,
+                     EventoDeUso, Consentimento)
 
 
 @admin.register(Post)
@@ -20,7 +21,7 @@ class PostAdmin(admin.ModelAdmin):
 @admin.register(MensagemRecebida)
 class MensagemRecebidaAdmin(admin.ModelAdmin):
     list_display = ('recebida_em', 'canal', 'remetente', 'resumo',
-                    'categoria_sugerida', 'status', 'post')
+                    'categoria_sugerida', 'consentido', 'status', 'post')
     list_filter = ('canal', 'status')
     search_fields = ('texto', 'remetente', 'id_externo')
     readonly_fields = ('recebida_em',)
@@ -47,9 +48,19 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
         rotulo = dict(Post.CATEGORIAS).get(sugestao['categoria'], sugestao['categoria'])
         return f"{rotulo} ({sugestao['pontuacao']})"
 
+    @admin.display(description='Consentimento', boolean=True)
+    def consentido(self, obj):
+        """Mostra na fila se ha consentimento ativo para aquele remetente.
+
+        Sem esta coluna o moderador so descobriria a ausencia depois de rodar a
+        acao e ler o resumo, o que transforma uma informacao em uma tentativa.
+        """
+        return ingestao.tem_consentimento(obj.canal, obj.remetente)
+
     @admin.action(description='Classificar e criar rascunho das mensagens selecionadas')
     def classificar_selecionadas(self, request, queryset):
-        resumo = {ingestao.CRIADO: 0, ingestao.SEM_CONFIANCA: 0, ingestao.JA_PROCESSADA: 0}
+        resumo = {ingestao.CRIADO: 0, ingestao.SEM_CONFIANCA: 0,
+                  ingestao.SEM_CONSENTIMENTO: 0, ingestao.JA_PROCESSADA: 0}
 
         for mensagem in queryset:
             _, motivo = ingestao.processar_mensagem(mensagem)
@@ -59,6 +70,10 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
         if resumo[ingestao.SEM_CONFIANCA]:
             partes.append(
                 f"{resumo[ingestao.SEM_CONFIANCA]} sem confiança, mantida(s) na fila"
+            )
+        if resumo[ingestao.SEM_CONSENTIMENTO]:
+            partes.append(
+                f"{resumo[ingestao.SEM_CONSENTIMENTO]} sem consentimento do remetente"
             )
         if resumo[ingestao.JA_PROCESSADA]:
             partes.append(f"{resumo[ingestao.JA_PROCESSADA]} já processada(s)")
@@ -97,6 +112,19 @@ class EventoDeUsoAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(Consentimento)
+class ConsentimentoAdmin(admin.ModelAdmin):
+    list_display = ('remetente', 'canal', 'concedido_em', 'politica_versao',
+                    'situacao', 'revogado_em')
+    list_filter = ('canal', 'politica_versao')
+    search_fields = ('remetente',)
+    readonly_fields = ('concedido_em',)
+
+    @admin.display(description='Ativo', boolean=True)
+    def situacao(self, obj):
+        return obj.ativo
 
 
 admin.site.register(Curtida)

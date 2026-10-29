@@ -12,9 +12,12 @@ from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.test import TestCase, SimpleTestCase
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
+from django.utils import timezone
 from django.db import connection
 
-from .models import Post, Curtida, Comentario, MensagemRecebida, EventoDeUso
+from .models import (Post, Curtida, Comentario, MensagemRecebida,
+                     EventoDeUso, Consentimento)
 from . import classificacao, ingestao, privacidade
 
 
@@ -715,9 +718,17 @@ class TestInterpretacaoCompleta(SimpleTestCase):
 
 
 class TestProcessamentoDeMensagem(TestCase):
+    REMETENTE = '5511999998888'
+
+    def setUp(self):
+        # Estes testes exercitam a classificacao, nao o consentimento. Sem o
+        # registro, todos parariam em SEM_CONSENTIMENTO antes de chegar na
+        # parte que lhes interessa.
+        ingestao.registrar_consentimento('teste', self.REMETENTE)
+
     def nova_mensagem(self, texto, **extra):
         return MensagemRecebida.objects.create(
-            canal='teste', remetente='5511999998888', texto=texto, **extra
+            canal='teste', remetente=self.REMETENTE, texto=texto, **extra
         )
 
     def test_mensagem_classificavel_vira_rascunho(self):
@@ -809,6 +820,9 @@ class TestUsuarioDoSistema(TestCase):
 
 
 class TestComandoClassificar(TestCase):
+    def setUp(self):
+        ingestao.registrar_consentimento('teste', '5511999998888')
+
     def test_comando_cria_rascunhos_das_pendentes(self):
         MensagemRecebida.objects.create(
             canal='teste', remetente='5511999998888',
@@ -1014,7 +1028,7 @@ class TestExportacaoCsv(TestCase):
         self.gerar_uso()
         ids = list(EventoDeUso.objects.values_list('pk', flat=True))
         return self.client.post(
-            '/admin/posts/eventodeuso/',
+            reverse('admin:posts_eventodeuso_changelist'),
             {'action': acao, '_selected_action': ids},
         )
 
@@ -1058,7 +1072,7 @@ class TestExportacaoCsv(TestCase):
     def test_visitante_sem_painel_nao_exporta(self):
         self.client.logout()
         resposta = self.client.post(
-            '/admin/posts/eventodeuso/',
+            reverse('admin:posts_eventodeuso_changelist'),
             {'action': 'exportar_eventos', '_selected_action': ['1']},
         )
         self.assertNotEqual(resposta.status_code, 200)
@@ -1109,3 +1123,128 @@ class TestFalhaDaTelemetriaFicaVisivel(TestCase):
         self.assertEqual(resposta.status_code, 200)
         self.assertIn('Falha ao registrar evento de uso', capturado.output[0])
         self.assertIn('banco fora do ar', capturado.output[0])
+
+# ---------------------------------------------------------------------------
+# Consentimento do remetente
+# ---------------------------------------------------------------------------
+
+
+@override_settings(INGESTAO_TOKEN=TOKEN)
+class TestRegistroDeConsentimento(TestCase):
+    def test_ingestao_com_consentimento_grava_o_registro(self):
+        self.client.post(
+            '/api/ingestao/',
+            data=json.dumps({'canal': 'teste', 'remetente': '5511999998888',
+                             'texto': 'vendo sofa 200 reais',
+                             'consentimento': True}),
+            content_type='application/json',
+            headers={'x-ingestao-token': TOKEN},
+        )
+        registro = Consentimento.objects.get()
+        self.assertEqual(registro.remetente, '5511999998888')
+        self.assertTrue(registro.ativo)
+
+    def test_guarda_a_versao_da_politica_vigente(self):
+        """Sem isso nao da para dizer com que texto a pessoa concordou."""
+        ingestao.registrar_consentimento('teste', '5511999998888')
+        self.assertEqual(
+            Consentimento.objects.get().politica_versao,
+            privacidade.POLITICA_VERSAO,
+        )
+
+    def test_consentimento_vale_para_os_envios_seguintes(self):
+        """O consentimento e da pessoa, nao da mensagem."""
+        ingestao.registrar_consentimento('teste', '5511999998888')
+        ingestao.registrar_consentimento('teste', '5511999998888')
+        self.assertEqual(Consentimento.objects.count(), 1)
+
+    def test_ingestao_sem_consentimento_nao_grava_registro(self):
+        self.client.post(
+            '/api/ingestao/',
+            data=json.dumps({'canal': 'teste', 'remetente': '5511999998888',
+                             'texto': 'vendo sofa 200 reais'}),
+            content_type='application/json',
+            headers={'x-ingestao-token': TOKEN},
+        )
+        self.assertEqual(Consentimento.objects.count(), 0)
+
+    def test_mensagem_e_gravada_mesmo_sem_consentimento(self):
+        """Receber e guardar e uma coisa; publicar e outra.
+
+        O registro de que a mensagem chegou precisa existir de qualquer forma,
+        nem que seja para documentar que chegou sem autorizacao de uso.
+        """
+        self.client.post(
+            '/api/ingestao/',
+            data=json.dumps({'canal': 'teste', 'remetente': '5511999998888',
+                             'texto': 'vendo sofa 200 reais'}),
+            content_type='application/json',
+            headers={'x-ingestao-token': TOKEN},
+        )
+        self.assertEqual(MensagemRecebida.objects.count(), 1)
+
+    def test_quem_revogou_e_voltou_recomeca_sob_a_politica_atual(self):
+        registro = ingestao.registrar_consentimento('teste', '5511999998888')
+        registro.revogado_em = timezone.now()
+        registro.save(update_fields=['revogado_em'])
+
+        ingestao.registrar_consentimento('teste', '5511999998888')
+        registro.refresh_from_db()
+        self.assertIsNone(registro.revogado_em)
+        self.assertEqual(Consentimento.objects.count(), 1)
+
+
+class TestPublicacaoDependeDeConsentimento(TestCase):
+    def nova_mensagem(self, remetente='5511999998888'):
+        return MensagemRecebida.objects.create(
+            canal='teste', remetente=remetente,
+            texto='Doando sofá bege, retirar no local',
+        )
+
+    def test_sem_consentimento_nao_vira_rascunho(self):
+        """REGRESSAO: e a garantia de que o art. 7, I e cumprido no codigo.
+
+        Se este teste falhar, conteudo de morador pode ser publicado sem que
+        ele tenha autorizado - exatamente o que o aviso de privacidade promete
+        que nao acontece.
+        """
+        mensagem = self.nova_mensagem()
+        post, motivo = ingestao.processar_mensagem(mensagem)
+
+        self.assertIsNone(post)
+        self.assertEqual(motivo, ingestao.SEM_CONSENTIMENTO)
+        self.assertEqual(Post.objects.count(), 0)
+
+        mensagem.refresh_from_db()
+        self.assertEqual(mensagem.status, 'pendente')
+        self.assertIn('consentimento', mensagem.erro.lower())
+
+    def test_com_consentimento_vira_rascunho_normalmente(self):
+        ingestao.registrar_consentimento('teste', '5511999998888')
+        post, motivo = ingestao.processar_mensagem(self.nova_mensagem())
+
+        self.assertEqual(motivo, ingestao.CRIADO)
+        self.assertEqual(post.categoria, 'doacao')
+        self.assertEqual(post.status, 'rascunho')
+
+    def test_revogacao_impede_novas_publicacoes(self):
+        registro = ingestao.registrar_consentimento('teste', '5511999998888')
+        registro.revogado_em = timezone.now()
+        registro.save(update_fields=['revogado_em'])
+
+        post, motivo = ingestao.processar_mensagem(self.nova_mensagem())
+        self.assertIsNone(post)
+        self.assertEqual(motivo, ingestao.SEM_CONSENTIMENTO)
+
+    def test_consentimento_de_um_nao_vale_para_outro(self):
+        ingestao.registrar_consentimento('teste', '5511999998888')
+        post, motivo = ingestao.processar_mensagem(
+            self.nova_mensagem(remetente='5511977776666')
+        )
+        self.assertIsNone(post)
+        self.assertEqual(motivo, ingestao.SEM_CONSENTIMENTO)
+
+    def test_consentimento_e_por_canal(self):
+        """Autorizar no WhatsApp nao autoriza no Telegram."""
+        ingestao.registrar_consentimento('whatsapp', '5511999998888')
+        self.assertFalse(ingestao.tem_consentimento('telegram', '5511999998888'))

@@ -47,7 +47,7 @@ class Command(BaseCommand):
             return
 
         resumo = {ingestao.CRIADO: 0, ingestao.SEM_CONFIANCA: 0,
-                  ingestao.JA_PROCESSADA: 0}
+                  ingestao.SEM_CONSENTIMENTO: 0, ingestao.JA_PROCESSADA: 0}
 
         for mensagem in fila:
             post, motivo = ingestao.processar_mensagem(mensagem)
@@ -62,11 +62,16 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(
                     f'  #{mensagem.id} -> sem confianca, mantida na fila'
                 ))
+            elif motivo == ingestao.SEM_CONSENTIMENTO:
+                self.stdout.write(self.style.WARNING(
+                    f'  #{mensagem.id} -> sem consentimento do remetente, nao publicavel'
+                ))
 
         self.stdout.write('')
         self.stdout.write(
             f'{resumo[ingestao.CRIADO]} rascunho(s) criado(s), '
             f'{resumo[ingestao.SEM_CONFIANCA]} sem confianca, '
+            f'{resumo[ingestao.SEM_CONSENTIMENTO]} sem consentimento, '
             f'{resumo[ingestao.JA_PROCESSADA]} ja processada(s).'
         )
         if resumo[ingestao.CRIADO]:

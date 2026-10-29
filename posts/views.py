@@ -12,7 +12,7 @@ from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Count
 from .models import Post, Curtida, Comentario, MensagemRecebida
-from . import seguranca
+from . import ingestao, seguranca
 from .privacidade import POLITICA_VERSAO, POLITICA_ATUALIZADA_EM
 from django.core.paginator import Paginator
 
@@ -358,11 +358,21 @@ def api_ingestao(request):
         id_externo=id_externo[:128],
     )
 
+    # O canal informa, no envio, se a pessoa ja aceitou os termos de uso. Quem
+    # obtem esse aceite e a integracao com a mensageria, no primeiro contato
+    # com cada numero; aqui so registramos o que ela afirma ter obtido.
+    #
+    # Sem o aceite a mensagem continua sendo gravada - precisamos do registro
+    # de que ela chegou -, mas nao podera virar publicacao.
+    if dados.get('consentimento') is True:
+        ingestao.registrar_consentimento(canal, remetente[:64])
+
     return JsonResponse({
         'ok': True,
         'duplicada': False,
         'id': mensagem.id,
         'status': mensagem.status,
+        'consentimento': ingestao.tem_consentimento(canal, remetente[:64]),
     }, status=201)
 
 

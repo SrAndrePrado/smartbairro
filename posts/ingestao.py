@@ -16,7 +16,8 @@ from django.contrib.auth.models import User
 from django.db import transaction
 
 from . import classificacao
-from .models import Post, MensagemRecebida
+from .privacidade import POLITICA_VERSAO
+from .models import Post, MensagemRecebida, Consentimento
 
 # Nome do usuario que figura como autor dos posts nascidos de mensagens.
 #
@@ -48,7 +49,34 @@ def obter_usuario_sistema():
 # Motivos devolvidos por processar_mensagem, para o chamador montar o resumo.
 CRIADO = 'criado'
 SEM_CONFIANCA = 'sem_confianca'
+SEM_CONSENTIMENTO = 'sem_consentimento'
 JA_PROCESSADA = 'ja_processada'
+
+
+def registrar_consentimento(canal, remetente):
+    """Grava o consentimento do remetente, ou reativa um que fora revogado.
+
+    Devolve o registro. A versao da politica vigente fica gravada junto: sem
+    ela nao seria possivel dizer com que texto a pessoa concordou.
+    """
+    registro, criado = Consentimento.objects.get_or_create(
+        canal=canal,
+        remetente=remetente,
+        defaults={'politica_versao': POLITICA_VERSAO},
+    )
+    if not criado and registro.revogado_em is not None:
+        # Quem revogou e voltou a consentir recomeca sob a politica atual.
+        registro.revogado_em = None
+        registro.politica_versao = POLITICA_VERSAO
+        registro.save(update_fields=['revogado_em', 'politica_versao'])
+    return registro
+
+
+def tem_consentimento(canal, remetente):
+    """Diz se ha consentimento ativo para aquele remetente naquele canal."""
+    return Consentimento.objects.filter(
+        canal=canal, remetente=remetente, revogado_em__isnull=True
+    ).exists()
 
 
 def processar_mensagem(mensagem, forcar=False):
@@ -62,6 +90,18 @@ def processar_mensagem(mensagem, forcar=False):
     """
     if mensagem.post_id and not forcar:
         return None, JA_PROCESSADA
+
+    # Receber uma mensagem e guarda-la e uma coisa; publicar o conteudo dela e
+    # outra. A segunda depende de consentimento do titular, verificado aqui e
+    # nao na recepcao: a mensagem precisa ser gravada de qualquer forma, nem
+    # que seja para registrar que chegou sem autorizacao de uso.
+    if not tem_consentimento(mensagem.canal, mensagem.remetente):
+        mensagem.erro = (
+            'Sem consentimento ativo registrado para este remetente. '
+            'O conteudo nao pode ser publicado (Lei 13.709/2018, art. 7, I).'
+        )
+        mensagem.save(update_fields=['erro'])
+        return None, SEM_CONSENTIMENTO
 
     sugestao = classificacao.interpretar(mensagem.texto)
 
@@ -111,7 +151,7 @@ def processar_pendentes(limite=None):
     if limite:
         fila = fila[:limite]
 
-    resumo = {CRIADO: 0, SEM_CONFIANCA: 0, JA_PROCESSADA: 0}
+    resumo = {CRIADO: 0, SEM_CONFIANCA: 0, SEM_CONSENTIMENTO: 0, JA_PROCESSADA: 0}
     for mensagem in fila:
         _, motivo = processar_mensagem(mensagem)
         resumo[motivo] += 1
