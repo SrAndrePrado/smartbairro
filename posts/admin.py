@@ -25,7 +25,7 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
     list_filter = ('canal', 'status')
     search_fields = ('texto', 'remetente', 'id_externo')
     readonly_fields = ('recebida_em',)
-    actions = ['classificar_selecionadas']
+    actions = ['classificar_selecionadas', 'esquecer_remetentes']
 
     @admin.display(description='Mensagem')
     def resumo(self, obj):
@@ -56,6 +56,36 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
         acao e ler o resumo, o que transforma uma informacao em uma tentativa.
         """
         return ingestao.tem_consentimento(obj.canal, obj.remetente)
+
+    @admin.action(description='Atender pedido de exclusão do remetente (LGPD art. 18, VI)')
+    def esquecer_remetentes(self, request, queryset):
+        """Apaga os dados pessoais dos remetentes das mensagens selecionadas.
+
+        Age sobre a PESSOA, e nao sobre as mensagens marcadas: selecionar uma
+        mensagem apaga tudo daquele remetente naquele canal. Atender mensagem a
+        mensagem deixaria as outras para tras, e um pedido de exclusao atendido
+        pela metade nao foi atendido.
+
+        As publicacoes geradas sao mantidas, apenas sem o telefone de contato.
+        Para apagar tambem as publicacoes, use o comando esquecer_remetente com
+        --apagar-posts, que exige a decisao explicita de quem opera.
+        """
+        resumo = {'mensagens_apagadas': 0, 'posts_anonimizados': 0,
+                  'consentimento_revogado': 0}
+
+        for canal, remetente in ingestao.remetentes_distintos(queryset):
+            r = ingestao.esquecer_remetente(canal, remetente)
+            resumo['mensagens_apagadas'] += r['mensagens_apagadas']
+            resumo['posts_anonimizados'] += r['posts_anonimizados']
+            resumo['consentimento_revogado'] += int(r['consentimento_revogado'])
+
+        self.message_user(
+            request,
+            f"{resumo['mensagens_apagadas']} mensagem(ns) apagada(s), "
+            f"{resumo['posts_anonimizados']} publicação(ões) sem telefone, "
+            f"{resumo['consentimento_revogado']} consentimento(s) revogado(s). "
+            'Operação irreversível.'
+        )
 
     @admin.action(description='Classificar e criar rascunho das mensagens selecionadas')
     def classificar_selecionadas(self, request, queryset):

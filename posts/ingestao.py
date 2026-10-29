@@ -14,6 +14,7 @@ quanto por linha de comando sem duplicar codigo.
 
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.utils import timezone
 
 from . import classificacao
 from .privacidade import POLITICA_VERSAO
@@ -156,3 +157,81 @@ def processar_pendentes(limite=None):
         _, motivo = processar_mensagem(mensagem)
         resumo[motivo] += 1
     return resumo
+
+
+# ---------------------------------------------------------------------------
+# Direito a eliminacao (Lei 13.709/2018, art. 18, VI)
+# ---------------------------------------------------------------------------
+
+# O identificador some, mas a linha do consentimento permanece: ela registra
+# que houve revogacao e quando, sem dizer de quem. E o que responde, mais
+# tarde, "voces atenderam aquele pedido?".
+MARCA_REMOVIDO = '[removido a pedido do titular]'
+
+
+def esquecer_remetente(canal, remetente, apagar_posts=False):
+    """Atende um pedido de eliminacao de dados feito pelo titular.
+
+    O que acontece:
+      - o consentimento e revogado e o identificador, anonimizado;
+      - as mensagens cruas daquele remetente sao apagadas;
+      - o telefone de contato sai dos posts que nasceram delas.
+
+    O que NAO acontece por padrao: apagar os posts. Um anuncio sem telefone e
+    sem remetente deixou de identificar alguem, e pode ser conteudo que a
+    comunidade ainda usa. Mas o parametro apagar_posts existe porque a decisao
+    e do titular, nao nossa - se ele pedir a remocao completa, o pedido manda.
+
+    Fora do alcance desta rotina: comentarios e curtidas feitos por uma CONTA
+    do site. Sao outra identidade, com outra base legal, e se apagam pelo
+    cadastro do usuario.
+
+    Devolve um resumo com as contagens, para quem chamou relatar ao titular o
+    que foi feito.
+    """
+    mensagens = MensagemRecebida.objects.filter(canal=canal, remetente=remetente)
+    ids_de_posts = [m.post_id for m in mensagens if m.post_id]
+
+    resumo = {
+        'mensagens_apagadas': 0,
+        'posts_anonimizados': 0,
+        'posts_apagados': 0,
+        'consentimento_revogado': False,
+    }
+
+    # Tudo numa transacao: um pedido de exclusao atendido pela metade seria
+    # pior do que um nao atendido, porque ninguem saberia o que sobrou.
+    with transaction.atomic():
+        registro = Consentimento.objects.filter(
+            canal=canal, remetente=remetente
+        ).first()
+        if registro:
+            # A marca leva a chave da propria linha porque canal + remetente e
+            # unico: sem isso, o segundo pedido de exclusao no mesmo canal
+            # colidiria com o primeiro. A chave nao revela nada sobre a pessoa.
+            registro.remetente = f'{MARCA_REMOVIDO}#{registro.pk}'[:64]
+            registro.revogado_em = timezone.now()
+            registro.save(update_fields=['remetente', 'revogado_em'])
+            resumo['consentimento_revogado'] = True
+
+        posts = Post.objects.filter(id__in=ids_de_posts)
+        if apagar_posts:
+            resumo['posts_apagados'] = posts.count()
+            posts.delete()
+        else:
+            resumo['posts_anonimizados'] = posts.update(telefone='')
+
+        resumo['mensagens_apagadas'] = mensagens.count()
+        mensagens.delete()
+
+    return resumo
+
+
+def remetentes_distintos(queryset):
+    """Extrai os pares (canal, remetente) unicos de um conjunto de mensagens.
+
+    Usado pela acao do painel: o moderador seleciona mensagens, mas o pedido de
+    exclusao e da PESSOA - atender uma mensagem de cada vez deixaria as outras
+    daquele mesmo remetente para tras.
+    """
+    return sorted(set(queryset.values_list('canal', 'remetente')))

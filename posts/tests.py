@@ -1248,3 +1248,129 @@ class TestPublicacaoDependeDeConsentimento(TestCase):
         """Autorizar no WhatsApp nao autoriza no Telegram."""
         ingestao.registrar_consentimento('whatsapp', '5511999998888')
         self.assertFalse(ingestao.tem_consentimento('telegram', '5511999998888'))
+
+
+# ---------------------------------------------------------------------------
+# Direito a eliminacao (art. 18, VI)
+# ---------------------------------------------------------------------------
+
+
+class TestEsquecerRemetente(TestCase):
+    CANAL = 'teste'
+    TITULAR = '5511999998888'
+    OUTRO = '5511977776666'
+
+    def setUp(self):
+        for remetente in (self.TITULAR, self.OUTRO):
+            ingestao.registrar_consentimento(self.CANAL, remetente)
+
+    def mensagem_publicada(self, remetente, texto='vendo sofa 200 reais zap 11 98888-7777'):
+        m = MensagemRecebida.objects.create(
+            canal=self.CANAL, remetente=remetente, texto=texto
+        )
+        post, _ = ingestao.processar_mensagem(m)
+        return m, post
+
+    def test_apaga_as_mensagens_do_titular(self):
+        self.mensagem_publicada(self.TITULAR)
+        ingestao.esquecer_remetente(self.CANAL, self.TITULAR)
+        self.assertFalse(
+            MensagemRecebida.objects.filter(remetente=self.TITULAR).exists()
+        )
+
+    def test_revoga_e_anonimiza_o_consentimento(self):
+        """A linha sobrevive sem o identificador: registra que houve revogacao."""
+        ingestao.esquecer_remetente(self.CANAL, self.TITULAR)
+
+        self.assertFalse(
+            Consentimento.objects.filter(remetente=self.TITULAR).exists()
+        )
+        restante = Consentimento.objects.exclude(remetente=self.OUTRO).get()
+        self.assertIn(ingestao.MARCA_REMOVIDO, restante.remetente)
+        self.assertIsNotNone(restante.revogado_em)
+
+    def test_tira_o_telefone_da_publicacao_mas_mantem_o_conteudo(self):
+        _, post = self.mensagem_publicada(self.TITULAR)
+        self.assertTrue(post.telefone)
+
+        ingestao.esquecer_remetente(self.CANAL, self.TITULAR)
+
+        post.refresh_from_db()
+        self.assertEqual(post.telefone, '')
+        self.assertTrue(post.titulo)
+
+    def test_apaga_a_publicacao_quando_pedido(self):
+        _, post = self.mensagem_publicada(self.TITULAR)
+        ingestao.esquecer_remetente(self.CANAL, self.TITULAR, apagar_posts=True)
+        self.assertFalse(Post.objects.filter(pk=post.pk).exists())
+
+    def test_nao_toca_nos_dados_de_outro_remetente(self):
+        """REGRESSAO: atender um pedido nao pode apagar dado de terceiro."""
+        self.mensagem_publicada(self.TITULAR)
+        outro_m, outro_post = self.mensagem_publicada(self.OUTRO)
+
+        ingestao.esquecer_remetente(self.CANAL, self.TITULAR)
+
+        self.assertTrue(MensagemRecebida.objects.filter(pk=outro_m.pk).exists())
+        outro_post.refresh_from_db()
+        self.assertTrue(outro_post.telefone)
+        self.assertTrue(
+            Consentimento.objects.filter(
+                remetente=self.OUTRO, revogado_em__isnull=True
+            ).exists()
+        )
+
+    def test_dois_pedidos_no_mesmo_canal_nao_colidem(self):
+        """A marca de anonimizacao leva a chave da linha justamente por isso.
+
+        Canal + remetente e unico no banco. Sem a chave na marca, o segundo
+        pedido de exclusao quebraria com erro de unicidade.
+        """
+        ingestao.esquecer_remetente(self.CANAL, self.TITULAR)
+        ingestao.esquecer_remetente(self.CANAL, self.OUTRO)
+        self.assertEqual(Consentimento.objects.count(), 2)
+
+    def test_depois_de_esquecido_nao_publica_mais(self):
+        self.mensagem_publicada(self.TITULAR)
+        ingestao.esquecer_remetente(self.CANAL, self.TITULAR)
+
+        nova = MensagemRecebida.objects.create(
+            canal=self.CANAL, remetente=self.TITULAR, texto='vendo mesa 100 reais'
+        )
+        post, motivo = ingestao.processar_mensagem(nova)
+        self.assertIsNone(post)
+        self.assertEqual(motivo, ingestao.SEM_CONSENTIMENTO)
+
+    def test_pedido_de_quem_nunca_mandou_nada_nao_quebra(self):
+        resumo = ingestao.esquecer_remetente(self.CANAL, '5511900000000')
+        self.assertEqual(resumo['mensagens_apagadas'], 0)
+
+
+class TestComandoEsquecerRemetente(TestCase):
+    def setUp(self):
+        ingestao.registrar_consentimento('teste', '5511999998888')
+        MensagemRecebida.objects.create(
+            canal='teste', remetente='5511999998888',
+            texto='Doando sofá bege, retirar no local',
+        )
+
+    def test_simular_nao_apaga_nada(self):
+        """A operacao e irreversivel, entao a simulacao e a primeira defesa."""
+        saida = StringIO()
+        call_command('esquecer_remetente', '--canal', 'teste',
+                     '--remetente', '5511999998888', '--simular', stdout=saida)
+
+        self.assertEqual(MensagemRecebida.objects.count(), 1)
+        self.assertIn('Simulacao', saida.getvalue())
+
+    def test_apaga_quando_executado_de_verdade(self):
+        saida = StringIO()
+        call_command('esquecer_remetente', '--canal', 'teste',
+                     '--remetente', '5511999998888', stdout=saida)
+        self.assertEqual(MensagemRecebida.objects.count(), 0)
+
+    def test_canal_invalido_e_recusado(self):
+        from django.core.management.base import CommandError
+        with self.assertRaises(CommandError):
+            call_command('esquecer_remetente', '--canal', 'pombo',
+                         '--remetente', '5511999998888', stdout=StringIO())
