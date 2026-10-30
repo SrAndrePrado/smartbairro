@@ -1492,11 +1492,17 @@ class TestCodigoDeRetornoETempo(TestCase):
 
 
 class TestAvisoCobreAsMetricas(TestCase):
-    def test_versao_subiu_junto_com_a_mudanca(self):
-        """Mudar o que se coleta sem versionar o aviso o tornaria falso."""
-        self.assertEqual(privacidade.POLITICA_VERSAO, '1.1')
+    def test_pagina_mostra_a_versao_vigente(self):
+        """A pagina tem que anunciar a versao que o codigo considera em vigor.
+
+        Antes este teste fixava o numero da versao, o que o obrigava a ser
+        editado a cada alteracao do aviso - e um teste que se edita junto com o
+        que ele verifica nao verifica nada. Comparar com a constante mantem a
+        checagem valida em qualquer versao: o que importa e a pagina e o
+        registro de consentimento falarem da mesma.
+        """
         corpo = self.client.get('/privacidade/').content.decode()
-        self.assertIn('1.1', corpo)
+        self.assertIn(privacidade.POLITICA_VERSAO, corpo)
 
     def test_aviso_declara_os_dados_novos(self):
         # O HTML quebra linha no meio das frases, entao comparar texto cru
@@ -1512,6 +1518,16 @@ class TestAvisoCobreAsMetricas(TestCase):
         corpo = re.sub(r'\s+', ' ',
                        self.client.get('/privacidade/').content.decode().lower())
         self.assertIn('não é armazenado', corpo)
+
+    def test_canal_de_contato_do_titular_esta_publicado(self):
+        """REGRESSAO: sem canal informado o aviso nao cumpre o art. 9 da LGPD.
+
+        O titular precisa de um meio concreto de exercer os direitos do art.
+        18. Aviso que lista direitos sem dizer como exerce-los e decorativo.
+        """
+        corpo = self.client.get('/privacidade/').content.decode()
+        self.assertIn('smartbairro.contato@gmail.com', corpo)
+        self.assertIn('15 dias', corpo)
 
     def test_historico_de_versoes_esta_publicado(self):
         corpo = self.client.get('/privacidade/').content.decode()
