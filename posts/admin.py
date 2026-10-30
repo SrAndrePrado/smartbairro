@@ -1,3 +1,20 @@
+"""Configuracao do painel administrativo.
+
+Regra desta aplicacao: TODA acao declara explicitamente a permissao que exige.
+
+O Django so filtra uma acao por permissao quando ela declara qual precisa. Uma
+acao sem `permissions=` fica disponivel para qualquer conta que consiga abrir a
+listagem - inclusive uma conta criada apenas para consulta. O codigo que decide
+isso e `_filter_actions_by_permissions`, em django/contrib/admin/options.py:
+sem o atributo, a acao passa direto.
+
+Por isso as acoes de leitura tambem declaram `permissions=['view']`, embora
+quem abriu a listagem ja tenha essa permissao. A declaracao redundante existe
+para que a ausencia dela signifique sempre a mesma coisa: esqueceram. Sem essa
+convencao, nao da para distinguir "liberada de proposito" de "nunca pensaram no
+assunto".
+"""
+
 from django.contrib import admin
 
 from . import classificacao, exportacao, ingestao
@@ -12,7 +29,8 @@ class PostAdmin(admin.ModelAdmin):
     search_fields = ('titulo', 'descricao', 'telefone')
     actions = ['aprovar_rascunhos']
 
-    @admin.action(description='Aprovar e publicar os rascunhos selecionados')
+    @admin.action(permissions=['change'],
+                  description='Aprovar e publicar os rascunhos selecionados')
     def aprovar_rascunhos(self, request, queryset):
         publicados = queryset.filter(status='rascunho').update(status='publicado')
         self.message_user(request, f'{publicados} post(s) publicado(s).')
@@ -57,7 +75,8 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
         """
         return ingestao.tem_consentimento(obj.canal, obj.remetente)
 
-    @admin.action(description='Atender pedido de exclusão do remetente (LGPD art. 18, VI)')
+    @admin.action(permissions=['delete'],
+                  description='Atender pedido de exclusão do remetente (LGPD art. 18, VI)')
     def esquecer_remetentes(self, request, queryset):
         """Apaga os dados pessoais dos remetentes das mensagens selecionadas.
 
@@ -87,7 +106,8 @@ class MensagemRecebidaAdmin(admin.ModelAdmin):
             'Operação irreversível.'
         )
 
-    @admin.action(description='Classificar e criar rascunho das mensagens selecionadas')
+    @admin.action(permissions=['change'],
+                  description='Classificar e criar rascunho das mensagens selecionadas')
     def classificar_selecionadas(self, request, queryset):
         resumo = {ingestao.CRIADO: 0, ingestao.SEM_CONFIANCA: 0,
                   ingestao.SEM_CONSENTIMENTO: 0, ingestao.JA_PROCESSADA: 0}
@@ -129,11 +149,13 @@ class EventoDeUsoAdmin(admin.ModelAdmin):
     date_hierarchy = 'ocorrido_em'
     actions = ['exportar_eventos', 'exportar_visitas']
 
-    @admin.action(description='Exportar selecionados para CSV (uma linha por página vista)')
+    @admin.action(permissions=['view'],
+                  description='Exportar selecionados para CSV (uma linha por página vista)')
     def exportar_eventos(self, request, queryset):
         return exportacao.exportar_eventos_csv(queryset)
 
-    @admin.action(description='Exportar resumo de visitas para CSV (uma linha por visita)')
+    @admin.action(permissions=['view'],
+                  description='Exportar resumo de visitas para CSV (uma linha por visita)')
     def exportar_visitas(self, request, queryset):
         return exportacao.exportar_visitas_csv(queryset)
 

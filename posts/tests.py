@@ -1577,3 +1577,140 @@ class TestHierarquiaDeTitulos(ComNavegador, BaseComDados):
 
     def test_mural_comeca_no_h1(self):
         self.assertEqual(self.niveis('/')[0], 1)
+
+
+# ---------------------------------------------------------------------------
+# Permissoes do painel administrativo
+# ---------------------------------------------------------------------------
+
+from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType
+
+
+class TestContaSomenteLeitura(TestCase):
+    """Uma conta de consulta nao pode disparar acao destrutiva.
+
+    REGRESSAO. O cenario e real: um integrante do grupo precisa do painel so
+    para tirar prints. Marcar "membro da equipe" e conceder as permissoes de
+    view parece suficiente, mas nao e: o Django so filtra uma acao por
+    permissao quando a acao declara qual exige. Antes desta correcao, essa
+    conta enxergava a acao que atende pedido de exclusao de titular, que e
+    irreversivel.
+    """
+
+    SENHA = 'senha-de-teste-123'
+    VISITA = 'abcdef0123456789'
+
+    def setUp(self):
+        self.pessoa = User.objects.create_user(
+            'consulta', password=self.SENHA, is_staff=True
+        )
+        for modelo in (Post, MensagemRecebida, EventoDeUso, Consentimento):
+            tipo = ContentType.objects.get_for_model(modelo)
+            self.pessoa.user_permissions.add(Permission.objects.get(
+                content_type=tipo,
+                codename='view_' + modelo._meta.model_name,
+            ))
+        self.client.login(username='consulta', password=self.SENHA)
+
+        self.mensagem = MensagemRecebida.objects.create(
+            canal='teste', remetente='5511999998888',
+            texto='vendo bicicleta aro 26 por 300 reais',
+        )
+        self.post = Post.objects.create(
+            titulo='Bicicleta aro 26', descricao='quadro azul',
+            categoria='venda', usuario=self.pessoa,
+        )
+        EventoDeUso.objects.create(visita=self.VISITA, caminho='/')
+
+    def abrir(self, nome, marcador):
+        """Abre a listagem e exige que ela tenha ao menos uma linha.
+
+        O Django esconde a barra de acoes quando a listagem esta vazia
+        (ChangeList.show_admin_actions). Sem esta conferencia, um assertNotIn
+        passaria tambem numa pagina sem resultado nenhum - ou seja, passaria
+        com o bug de volta no lugar. Teste que so sabe dizer 'nao achei' tem
+        de provar antes que estava olhando para a pagina certa.
+        """
+        corpo = self.client.get(reverse(nome)).content.decode()
+        self.assertIn(
+            marcador, corpo,
+            f'{nome} veio sem linhas; sem conteudo o teste nao prova nada',
+        )
+        return corpo
+
+    def test_entra_no_painel_e_ve_as_listagens(self):
+        for nome in ('admin:posts_post_changelist',
+                     'admin:posts_mensagemrecebida_changelist',
+                     'admin:posts_eventodeuso_changelist'):
+            with self.subTest(tela=nome):
+                self.assertEqual(self.client.get(reverse(nome)).status_code, 200)
+
+    def test_nao_enxerga_acoes_que_alteram_dados(self):
+        posts = self.abrir('admin:posts_post_changelist', 'Bicicleta aro 26')
+        mensagens = self.abrir(
+            'admin:posts_mensagemrecebida_changelist', '5511999998888'
+        )
+        self.assertNotIn('aprovar_rascunhos', posts)
+        self.assertNotIn('esquecer_remetentes', mensagens)
+        self.assertNotIn('classificar_selecionadas', mensagens)
+
+    def test_continua_enxergando_as_exportacoes(self):
+        """Exportar e leitura: e justamente o que esta conta precisa fazer."""
+        eventos = self.abrir('admin:posts_eventodeuso_changelist', self.VISITA)
+        self.assertIn('exportar_eventos', eventos)
+        self.assertIn('exportar_visitas', eventos)
+
+    def test_pedido_direto_de_exclusao_nao_apaga_nada(self):
+        """Nao basta sumir do menu: a acao e chamada por nome num POST."""
+        self.client.post(
+            reverse('admin:posts_mensagemrecebida_changelist'),
+            {'action': 'esquecer_remetentes',
+             '_selected_action': [self.mensagem.pk]},
+        )
+        self.assertTrue(
+            MensagemRecebida.objects.filter(pk=self.mensagem.pk).exists()
+        )
+
+    def test_nao_consegue_publicar_rascunho(self):
+        rascunho = Post.objects.create(
+            titulo='Rascunho', descricao='x', categoria='venda',
+            status='rascunho', usuario=self.pessoa,
+        )
+        self.client.post(
+            reverse('admin:posts_post_changelist'),
+            {'action': 'aprovar_rascunhos', '_selected_action': [rascunho.pk]},
+        )
+        rascunho.refresh_from_db()
+        self.assertEqual(rascunho.status, 'rascunho')
+
+
+class TestModeradorMantemAsAcoes(TestCase):
+    """A correcao nao pode ter tirado as acoes de quem modera de verdade."""
+
+    def setUp(self):
+        User.objects.create_superuser(
+            'moderador', 'moderador@example.com', 'senha-de-teste-123'
+        )
+        self.client.login(username='moderador', password='senha-de-teste-123')
+        self.mensagem = MensagemRecebida.objects.create(
+            canal='teste', remetente='5511999998888',
+            texto='vendo bicicleta aro 26 por 300 reais',
+        )
+
+    def test_superusuario_enxerga_todas_as_acoes(self):
+        mensagens = self.client.get(
+            reverse('admin:posts_mensagemrecebida_changelist')
+        ).content.decode()
+        self.assertIn('esquecer_remetentes', mensagens)
+        self.assertIn('classificar_selecionadas', mensagens)
+
+    def test_superusuario_ainda_atende_pedido_de_exclusao(self):
+        self.client.post(
+            reverse('admin:posts_mensagemrecebida_changelist'),
+            {'action': 'esquecer_remetentes',
+             '_selected_action': [self.mensagem.pk]},
+        )
+        self.assertFalse(
+            MensagemRecebida.objects.filter(pk=self.mensagem.pk).exists()
+        )
