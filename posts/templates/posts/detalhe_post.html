@@ -58,7 +58,7 @@
     <div class="card shadow-sm mb-4">
         <div class="card-body">
 
-            <h4 id="comentarios">💬 Comentários</h4>
+            <h3 class="h4" id="comentarios">💬 Comentários</h3>
 
             <form action="/comentar/{{ post.id }}/" method="POST" data-comentar="{{ post.id }}">
                 {% csrf_token %}
@@ -87,7 +87,7 @@
     <div class="card shadow-sm">
         <div class="card-body">
 
-            <h5>❤️ Quem curtiu:</h5>
+            <h3 class="h5">❤️ Quem curtiu:</h3>
 
             <ul class="mb-0">
                 {% for curtida in curtidas %}

@@ -1517,3 +1517,47 @@ class TestAvisoCobreAsMetricas(TestCase):
         corpo = self.client.get('/privacidade/').content.decode()
         self.assertIn('Versão 1.0', corpo)
         self.assertIn('Versão 1.1', corpo)
+
+# ---------------------------------------------------------------------------
+# Acessibilidade
+# ---------------------------------------------------------------------------
+
+
+class TestHierarquiaDeTitulos(ComNavegador, BaseComDados):
+    """Os niveis de titulo nao podem pular degraus.
+
+    Leitor de tela monta o indice da pagina a partir dos titulos, e e assim que
+    quem nao enxerga navega. Saltar de h1 para h5 produz um indice com buracos,
+    como um sumario que vai do capitulo 1 para o 1.1.1.1.
+
+    E o criterio 1.3.1 da WCAG 2.1, e foi um dos dois itens reprovados na
+    auditoria de 29/10.
+    """
+
+    def niveis(self, caminho):
+        corpo = self.client.get(caminho).content.decode()
+        return [int(n) for n in re.findall(r'<h([1-6])[\s>]', corpo)]
+
+    def verificar(self, caminho):
+        niveis = self.niveis(caminho)
+        self.assertTrue(niveis, f'{caminho} nao tem titulo nenhum')
+        anterior = niveis[0]
+        for atual in niveis[1:]:
+            if atual > anterior:
+                self.assertLessEqual(
+                    atual, anterior + 1,
+                    f'{caminho}: salto de h{anterior} para h{atual}',
+                )
+            anterior = atual
+
+    def test_mural_nao_pula_nivel(self):
+        self.verificar('/')
+
+    def test_detalhe_do_post_nao_pula_nivel(self):
+        self.verificar(f'/post/{self.post.id}/')
+
+    def test_aviso_de_privacidade_nao_pula_nivel(self):
+        self.verificar('/privacidade/')
+
+    def test_mural_comeca_no_h1(self):
+        self.assertEqual(self.niveis('/')[0], 1)
